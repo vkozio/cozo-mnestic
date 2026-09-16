@@ -1,6 +1,6 @@
 [package]
 name = "cozo-lib-wasm"
-version = "0.7.6"
+version = "0.18.0"
 edition = "2021"
 description = "Cozo database for WASM"
 authors = ["Ziyang Hu"]
@@ -17,22 +17,53 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 wasm-bindgen = "0.2.92"
-mnestic = { version = "0.7.6", path = "../cozo-core", default-features = false, features = ["wasm"] }
+mnestic = { path = "../cozo-core", default-features = false, features = ["wasm", "graph-algo"] }
 
-# The `console_error_panic_hook` crate provides better debugging of panics by
-# logging them with `console.error`. This is great for development, but requires
-# all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
-# code size when deploying.
-console_error_panic_hook = { version = "0.1.6", optional = true }
+# getrandom 0.2 — direct dependency. Cozo 0.18 uses rand 0.8 -> getrandom 0.2,
+# so the "js" feature is needed for wasm32-unknown-unknown.
+getrandom = { version = "0.2", features = ["js", "wasm-bindgen"] }
 
-# `wee_alloc` is a tiny allocator for wasm that is only ~1K in code size
-# compared to the default allocator's ~10K. It is slower than the default
-# allocator, however.
-wee_alloc = { version = "0.4.5", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }
+
+# Аллокатор не указываем — используется стандартный dlmalloc,
+# который Rust автоматически подставляет для wasm32-unknown-unknown.
+# Это даёт максимальную совместимость и предсказуемое поведение.
+
+# getrandom 0.3 — transitive dependency via ahash 0.8 (pulled in by the
+# `graph-algo` feature through graph -> graph_builder). ahash enables it
+# by default via its `runtime-rng` feature, so we must also enable the
+# `wasm_js` feature here for wasm32-unknown-unknown.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+# nanorand 0.7.0 broken on wasm32 without `getrandom`: system() calls
+# backup_entropy(), which only exists with default-features off.
+nanorand = { version = "0.7", features = ["getrandom"] }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.13"
+wasm-bindgen-test = "0.3.42"
 
-#[profile.release]
-## Tell `rustc` to optimize for small code size.
-#opt-level = "s"
+# wasm-pack тащит wasm-opt 117, который не понимает bulk-memory и
+# saturating float-to-int, излучаемые современным rustc. Отключаем его
+# встроенный прогон; при желании гнать свежий wasm-opt вручную.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+# patch page_size 0.4.2 which is missing a stub for non-unix/non-windows
+# targets (e.g. wasm32-unknown-unknown), causing E0425 on get_granularity_helper.
+[patch.crates-io]
+page_size = { path = "shim/page_size" }
+
+# ---------------------------------------------------------------------------
+# Профиль релиза для минимального размера .wasm
+# ---------------------------------------------------------------------------
+[profile.release]
+opt-level = "z" # Оптимизация под размер
+lto = true # Link-Time Optimization — заметно уменьшает бандл
+codegen-units = 1 # Лучшая оптимизация за счёт времени сборки
+strip = true # Удаляет отладочные символы из .wasm
+# panic = "abort"     # Раскомментируйте, если НЕ используете catch_unwind.
+# Даёт экономию ~10–15% размера, но ломает обработку паник.
+
+# Опционально: ускоряет dev-сборку
+[profile.dev]
+opt-level = 1
