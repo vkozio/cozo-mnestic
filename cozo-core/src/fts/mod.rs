@@ -7,6 +7,7 @@
  */
 
 use crate::data::memcmp::MemCmpEncoder;
+#[cfg(feature = "fts-cangjie")]
 use crate::fts::cangjie::tokenizer::CangJieTokenizer;
 use crate::fts::tokenizer::{
     AlphaNumOnlyFilter, AsciiFoldingFilter, BoxTokenFilter, Language, LowerCaser, NgramTokenizer,
@@ -14,6 +15,7 @@ use crate::fts::tokenizer::{
     TextAnalyzer, Tokenizer, WhitespaceTokenizer,
 };
 use crate::DataValue;
+#[cfg(feature = "fts-cangjie")]
 use jieba_rs::Jieba;
 use miette::{bail, ensure, miette, Result};
 use sha2::digest::FixedOutput;
@@ -23,6 +25,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 pub(crate) mod ast;
+#[cfg(feature = "fts-cangjie")]
 pub(crate) mod cangjie;
 pub(crate) mod indexing;
 pub(crate) mod tokenizer;
@@ -122,6 +125,7 @@ impl TokenizerConfig {
                     prefix_only,
                 ))
             }
+            #[cfg(feature = "fts-cangjie")]
             "Cangjie" => {
                 let hmm = match self.args.get(1) {
                     None => false,
@@ -145,10 +149,18 @@ impl TokenizerConfig {
                     }
                 };
                 Box::new(CangJieTokenizer {
-                    worker: std::sync::Arc::new(Jieba::new()),
+                    // jieba-rs 0.9 gates Jieba::new() behind `default-dict`;
+                    // cozo-core depends with default-features = false, so only
+                    // empty() exists. Empty dict = degraded CJK segmentation
+                    // but compiles on all targets incl. wasm32.
+                    worker: std::sync::Arc::new(Jieba::empty()),
                     option,
                 })
             }
+            #[cfg(not(feature = "fts-cangjie"))]
+            "Cangjie" => bail!(
+                "Cangjie tokenizer is disabled: rebuild with the `fts-cangjie` feature"
+            ),
             _ => bail!("Unknown tokenizer: {}", self.name),
         })
     }
