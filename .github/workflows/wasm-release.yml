@@ -35,9 +35,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - run: cargo build -p cozo-lib-wasm --target wasm32-unknown-unknown --verbose
-      - run: cargo test -p cozo-lib-wasm --target wasm32-unknown-unknown --verbose
-      - run: cargo clippy -p cozo-lib-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: cargo build --manifest-path cozo-lib-wasm/Cargo.toml --target wasm32-unknown-unknown --verbose
+      - run: cargo test --manifest-path cozo-lib-wasm/Cargo.toml --target wasm32-unknown-unknown --verbose
+      - run: cargo clippy --manifest-path cozo-lib-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   build:
     name: Build WASM package
