@@ -18,15 +18,22 @@ carry it). This fork publishes to GitHub Releases rather than to the npm registr
 `cozo-lib-wasm` package on npm is upstream CozoDB, a different database. The installed
 package name is still `cozo-lib-wasm`.
 
-Alternatively, you can download `cozo_lib_wasm-<VERSION>.tar.gz`
+Alternatively, you can download `cozo-lib-wasm-<VERSION>.tar.gz`
 from the [release page](https://github.com/vkozio/cozo-mnestic/releases) and include
-the JS and WASM files directly in your project: see the `index.html` example 
+the JS and WASM files directly in your project: see
+[`examples/wasm-web-demo`](../examples/wasm-web-demo) for a working Vite setup, and the
+`index.html` example
 [here](https://rustwasm.github.io/docs/wasm-bindgen/examples/without-a-bundler.html) for
-what is required in your code.
+what is required in your code without a bundler at all.
 
 ## Usage
 
-See the code [here](wasm-react-demo/src/App.js). Basically, you write
+> **Read this first:** the CozoScript dialect in this build differs from upstream
+> Cozo — sorting is `:sort -age` rather than `| order by age desc`, and a few
+> operators are missing or panic outright. Everything verified so far is
+> collected in [`docs/wasm-script-notes.md`](docs/wasm-script-notes.md).
+
+See the code [here](../examples/wasm-web-demo/src/main.js). Basically, you write
 
 ```js
 import init, {CozoDb} from "cozo-lib-wasm";

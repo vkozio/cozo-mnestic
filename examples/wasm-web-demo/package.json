@@ -1,0 +1,17 @@
+{
+  "name": "cozo-wasm-web-demo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "cozo-lib-wasm": "https://github.com/vkozio/cozo-mnestic/releases/download/wasm-v0.18.0/cozo-lib-wasm-0.18.0.tar.gz"
+  },
+  "devDependencies": {
+    "vite": "^8"
+  }
+}

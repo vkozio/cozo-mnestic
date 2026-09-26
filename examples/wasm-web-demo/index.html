@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cozo-lib-wasm — web demo</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        margin: 0 auto; max-width: 60rem; padding: 1.5rem;
+      }
+      h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
+      p.sub { margin: 0 0 1.25rem; opacity: .7; }
+      #status { padding: .5rem .75rem; border-radius: .375rem; margin-bottom: 1rem; }
+      #status.loading { background: #8883; }
+      #status.ready   { background: #2a83; }
+      #status.error   { background: #d443; }
+      textarea {
+        width: 100%; min-height: 9rem; box-sizing: border-box; font: inherit;
+        padding: .625rem; border-radius: .375rem; border: 1px solid #8886;
+        background: #0001; color: inherit; resize: vertical;
+      }
+      .row { display: flex; gap: .5rem; align-items: center; margin: .625rem 0; }
+      button {
+        font: inherit; padding: .375rem .875rem; border-radius: .375rem;
+        border: 1px solid #8886; background: #8882; color: inherit; cursor: pointer;
+      }
+      button:hover { background: #8884; }
+      pre {
+        background: #0001; padding: .75rem; border-radius: .375rem;
+        overflow: auto; max-height: 22rem; margin: 0; white-space: pre-wrap;
+      }
+      .err { color: #d443; }
+      .meta { opacity: .65; font-size: .85em; }
+    </style>
+  </head>
+  <body>
+    <h1>cozo-lib-wasm in the browser</h1>
+    <p class="sub">
+      Runs the CozoScript engine compiled to WebAssembly, loaded from the GitHub
+      Release tarball via the <code>cozo-lib-wasm</code> dependency.
+    </p>
+
+    <div id="status" class="loading">loading wasm…</div>
+
+    <textarea id="query" spellcheck="false">?[name, age, city] := *person[name, age, city]
+:sort -age
+:limit 5</textarea>
+
+    <div class="row">
+      <button id="run" disabled>Run</button>
+      <span id="meta" class="meta"></span>
+    </div>
+
+    <pre id="out">—</pre>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
