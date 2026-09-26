@@ -51,7 +51,79 @@ fn top_level_create_underscore_relation_is_a_silent_noop() {
     );
 }
 
-/// Fork #1 (FIXED): `*rel[col, ...], col == <ground>` and `*rel{col, ...},
+/// Fork #3 (FIXED): two relation options in one script silently dropped the
+/// first one. `query_script` is `(option | rule | ...)+` and `out_opts` holds a
+/// single `store_relation: Option<_>`, so `:create` + `:put` in one `run_script`
+/// used to leave only the `:put` — the `:create` vanished with no error, and the
+/// failure surfaced later as `relation_not_found` blaming the `:put`.
+///
+/// The transaction was never the problem: `run_query` creates the relation in
+/// the *same* tx before running the plan (`runtime/db.rs`). The loss was purely
+/// parser-side, in `parse/query.rs`, where `stored_relation` was reassigned on
+/// every `relation_option` instead of rejecting the second. The neighbouring
+/// `assert_none_option` / `assert_some_option` arms already guard duplicates
+/// via `DuplicateQueryAssertion`; this arm now does the same.
+#[test]
+fn duplicate_relation_option_is_rejected() {
+    let db = DbInstance::new("mem", "", Default::default()).unwrap();
+
+    let err = db
+        .run_script(
+            ":create dup_rel { name: String => age: Int }\n\
+             ?[name, age] <- [[\"Ada\", 36]] :put dup_rel { name, age }",
+            BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )
+        .expect_err("two relation options in one program must be rejected, not silently merged");
+
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("one stored relation") || msg.contains("duplicate"),
+        "error should name the actual problem, got: {err}"
+    );
+
+    // The rejected script must not have created anything: the whole point of the
+    // error is that the caller stops guessing which statement failed.
+    let rels = db
+        .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
+        .unwrap();
+    assert!(
+        rels.rows.is_empty(),
+        "a rejected script must not create relations, got {:?}",
+        rels.rows
+    );
+}
+
+/// A single relation option is still fine — the fix rejects the *second*, not
+/// the common case. Guards against over-correcting into a blanket rejection.
+#[test]
+fn single_relation_option_still_accepted() {
+    let db = DbInstance::new("mem", "", Default::default()).unwrap();
+
+    db.run_script(
+        ":create solo { name: String => age: Int }",
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )
+    .unwrap();
+    db.run_script(
+        r#"?[name, age] <- [["Ada", 36], ["Alan", 41]] :put solo { name, age }"#,
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )
+    .unwrap();
+
+    let rows = db
+        .run_script(
+            "?[name, age] := *solo[name, age]",
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )
+        .unwrap();
+    assert_eq!(rows.rows.len(), 2);
+}
+
+/// Fork #1 (FIXED): `*rel[col, ...], col == <ground>` and `*rel{col, ...,
 /// col == <ground>` now compile to a keyed `stored_prefix_join`, identical to the
 /// binding-first form `col = <ground>, *rel{...}`. Upstream compiled the post-
 /// filter shapes to a full `load_stored` scan + `eq(..)` filter (~20× slower at
