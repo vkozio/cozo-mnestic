@@ -4,6 +4,11 @@ Companion to `wasm-build-notes.md` (that one is about *producing* the artifact;
 this one is about *running* it). Everything here was executed against
 `cozo-lib-wasm` 0.18.0 on `wasm32-unknown-unknown` with `mem` storage.
 
+For the audit behind these notes — the corrections applied here, the parser bug
+that was fixed as a result, and a survey of what the wasm build still cannot do
+(notably: the query budget is a no-op, and triggers silently never fire) — see
+`wasm-gap-report.md`.
+
 The engine's grammar is the contract: `cozo-core/src/cozoscript.pest`. When a
 construct is rejected here, grep that file for the rule that owns it — the
 grammar is small enough to read in one sitting and it settles every "why won't
