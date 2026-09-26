@@ -497,6 +497,9 @@ impl<'s, S: Storage<'s>> Db<S> {
                     // with `?` before it dispatches. The `Abort` arm below is
                     // likewise correct — it breaks without dispatching.
                     let commit_result = self.commit_tx_with_test_hook(&mut tx);
+                    // Bound under the same cfg as its only reader below: on wasm32 this
+                    // was an unused variable.
+                    #[cfg(not(target_arch = "wasm32"))]
                     let committed = commit_result.is_ok();
                     let _ = results.send(commit_result.map(|_| NamedRows::default()));
                     #[cfg(not(target_arch = "wasm32"))]

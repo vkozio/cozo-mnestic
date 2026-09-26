@@ -7,10 +7,12 @@
 安装
 
 ```
-npm install cozo-lib-wasm
+npm install https://github.com/vkozio/cozo-mnestic/releases/download/wasm-v0.18.0/cozo-lib-wasm-0.18.0.tar.gz
 ```
 
-你也可以直接从 [发布页面](https://github.com/cozodb/cozo/releases) 下载 `cozo_wasm-<VERSION>-wasm32-unknown-unknown.zip` 文件，然后直接在你的网页代码中引用：见 [此处](https://rustwasm.github.io/docs/wasm-bindgen/examples/without-a-bundler.html) 的 `index.html` 范例。
+请将 `0.18.0` 替换为你需要的版本（文件名和发布标签中都带有版本号）。本 fork 发布到 GitHub Releases，而不是 npm 仓库——npm 上的 `cozo-lib-wasm` 是上游 CozoDB，与本项目是不同的数据库。安装后的包名仍然是 `cozo-lib-wasm`。
+
+你也可以直接从 [发布页面](https://github.com/vkozio/cozo-mnestic/releases) 下载 `cozo_lib_wasm-<VERSION>.tar.gz` 文件，然后直接在你的网页代码中引用：见 [此处](https://rustwasm.github.io/docs/wasm-bindgen/examples/without-a-bundler.html) 的 `index.html` 范例。
 
 ## 使用
 
@@ -38,7 +40,7 @@ export class CozoDb {
 
     static new(): CozoDb;
 
-    run(script: string, params: string): string;
+    run(script: string, params: string, immutable: boolean): string;
 
     export_relations(data: string): string;
 

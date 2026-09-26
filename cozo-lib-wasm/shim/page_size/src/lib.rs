@@ -32,7 +32,9 @@ use spin::Once;
 
 #[cfg(not(feature = "no_std"))]
 extern crate std;
-#[cfg(not(feature = "no_std"))]
+// Only the unix/windows fallbacks below use it; on wasm32-unknown-unknown
+// (neither unix nor windows) the import would be unused.
+#[cfg(all(not(feature = "no_std"), any(unix, windows)))]
 use std::sync::Once;
 
 #[cfg(unix)]
@@ -101,9 +103,7 @@ mod unix {
 
     #[inline]
     pub fn get() -> usize {
-        unsafe {
-            sysconf(_SC_PAGESIZE) as usize
-        }
+        unsafe { sysconf(_SC_PAGESIZE) as usize }
     }
 }
 
@@ -156,8 +156,8 @@ mod windows {
     #[cfg(not(feature = "no_std"))]
     use std::mem;
 
-    use winapi::um::sysinfoapi::{LPSYSTEM_INFO, SYSTEM_INFO};
     use winapi::um::sysinfoapi::GetSystemInfo;
+    use winapi::um::sysinfoapi::{LPSYSTEM_INFO, SYSTEM_INFO};
 
     #[inline]
     pub fn get() -> usize {

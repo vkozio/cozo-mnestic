@@ -10,11 +10,16 @@ To learn how to use CozoDB (CozoScript), read the [docs](https://docs.cozodb.org
 ## Installation
 
 ```
-npm install cozo-lib-wasm
+npm install https://github.com/vkozio/cozo-mnestic/releases/download/wasm-v0.18.0/cozo-lib-wasm-0.18.0.tar.gz
 ```
 
-Alternatively, you can download `cozo_wasm-<VERSION>-wasm32-unknown-unknown.zip`
-from the [release page](https://github.com/cozodb/cozo/releases) and include
+Replace `0.18.0` with the version you want (the artifact name and the release tag both
+carry it). This fork publishes to GitHub Releases rather than to the npm registry — the
+`cozo-lib-wasm` package on npm is upstream CozoDB, a different database. The installed
+package name is still `cozo-lib-wasm`.
+
+Alternatively, you can download `cozo_lib_wasm-<VERSION>.tar.gz`
+from the [release page](https://github.com/vkozio/cozo-mnestic/releases) and include
 the JS and WASM files directly in your project: see the `index.html` example 
 [here](https://rustwasm.github.io/docs/wasm-bindgen/examples/without-a-bundler.html) for
 what is required in your code.
@@ -45,7 +50,7 @@ export class CozoDb {
 
     static new(): CozoDb;
 
-    run(script: string, params: string): string;
+    run(script: string, params: string, immutable: boolean): string;
 
     export_relations(data: string): string;
 

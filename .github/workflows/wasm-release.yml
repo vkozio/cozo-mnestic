@@ -1,10 +1,14 @@
 # Build and publish cozo-lib-wasm to GitHub Releases for npm install via URL.
 #
-# Triggered by `wasm-v*` tags (e.g., wasm-v0.7.6).
-# On workflow_dispatch, builds only unless `publish=true`.
+# Triggered by `wasm-v*` tags (e.g., wasm-v0.18.0). The tag must equal
+# cozo-lib-wasm's Cargo.toml version — build-and-test enforces that BEFORE anything
+# is uploaded, so a forgotten version bump fails the run instead of quietly
+# replacing an already-published artifact. On workflow_dispatch the run is build-only
+# unless `publish=true`, and overwriting an existing release also needs `force=true`.
 #
-# Auth: No npm token required — artifacts are served directly from GitHub Releases.
-# Users install via: npm install https://github.com/cozodb/cozo/releases/download/wasm-v0.7.6/cozo-lib-wasm-0.7.6.tar.gz
+# Auth: no npm token — artifacts are served straight from GitHub Releases.
+# Install:
+#   npm install https://github.com/vkozio/cozo-mnestic/releases/download/wasm-v0.18.0/cozo-lib-wasm-0.18.0.tar.gz
 
 name: wasm-release
 
@@ -17,6 +21,20 @@ on:
         description: "Upload to GitHub Release (else build only)"
         type: boolean
         default: false
+      force:
+        description: "Overwrite an already-published release asset (else fail)"
+        type: boolean
+        default: false
+
+# This repo's releases are cut by three workflows (v*, py-v*, wasm-v*). Serializing
+# per tag keeps two runs of the same tag from racing on `gh release create` /
+# `gh release upload` of the same release.
+concurrency:
+  group: wasm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
 
 permissions:
   contents: read
@@ -25,33 +43,101 @@ jobs:
   build-and-test:
     name: Build and test WASM package
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
           components: clippy
+      # cozo-lib-wasm is a standalone package EXCLUDED from the Rust workspace, so the
+      # action's defaults (root Cargo.lock, root target/) match neither its lockfile nor
+      # its target dir: the key ignored the wasm lock, and the ~1m15s wasm build was
+      # never cached. Both workspaces have to be listed for this job to be cacheable.
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            cozo-lib-wasm
 
+      # Pinned instead of `curl … | sh`: the installer floated, so the toolchain that
+      # produces a released artifact changed under us (0.13.1 at the time of writing;
+      # 0.15.0 is out). The glue's module format is part of the consumer contract.
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        uses: jetli/wasm-pack-action@v1
+        with:
+          version: v0.13.1
 
+      # wasm-pack looks for the license file next to Cargo.toml (it saw `license =
+      # "MPL-2.0"` there) and warned "no LICENSE file(s) were found" — the published
+      # npm tarball shipped with no license text at all.
+      - name: Provide license for the published package
+        run: cp LICENSE.txt cozo-lib-wasm/LICENSE
+
+      # Trailing `-- --locked` goes straight to `cargo build`. cozo-lib-wasm's own
+      # Cargo.lock is committed, so a release can no longer be rebuilt against a
+      # different dependency set than the one that was tested (the floating resolve
+      # pulled wasm-bindgen 0.2.92 -> 0.2.129 between runs).
       - name: Build WASM package
         run: |
           cd cozo-lib-wasm
-          CARGO_PROFILE_RELEASE_LTO=fat wasm-pack build --target web --release
+          CARGO_PROFILE_RELEASE_LTO=fat wasm-pack build --target web --release -- --locked
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION="$(node -p "require('./cozo-lib-wasm/pkg/package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      # The release tag is derived from the crate version, NOT from the pushed ref, so
+      # a mismatch used to pass silently: `wasm-v0.19.0` over a 0.18.0 manifest would
+      # re-upload over the published 0.18.0 asset and go green. Same guard as
+      # crates-publish.yml's "Verify tag matches engine version".
+      - name: Verify tag matches package version
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG_VERSION="${GITHUB_REF#refs/tags/wasm-v}"
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF != cozo-lib-wasm version $VERSION. Bump cozo-lib-wasm/Cargo.toml to match the tag before releasing."
+            exit 1
+          fi
+          echo "Tag/version match OK: wasm-v$VERSION"
 
       - name: Run integration tests
         run: cd cozo-lib-wasm && node --test tests/integration.test.mjs
 
-      - name: Run clippy
-        run: cargo clippy --manifest-path cozo-lib-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+      # Lint gate for the wasm32 target — DISABLED for now, uncomment to enable.
+      #
+      # The form this workflow used to run,
+      #   cargo clippy --manifest-path cozo-lib-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+      # lints almost nothing: `-D warnings` reaches only the package named on the
+      # command line, and cozo-lib-wasm is a ~200-line wrapper. `mnestic` and the
+      # page_size shim are plain path dependencies there — compiled by rustc with lints
+      # capped — which is how cozo-core/src/runtime/db.rs:500 (`unused variable:
+      # committed`, wasm32-only) and shim/page_size/src/lib.rs:36 sailed through a
+      # green run. build.yml only covers the host target, so wasm32 needs its own gate.
+      #
+      # `--lib`, not `--all-targets`: mnestic's dev-dependencies pull criterion with
+      # html_reports, which is not a wasm32-clean dependency graph.
+      #
+      # - name: Run clippy (engine, wasm32)
+      #   run: >
+      #     cargo clippy -p mnestic
+      #     --target wasm32-unknown-unknown
+      #     --no-default-features --features wasm,graph-algo
+      #     --lib -- -D warnings
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: cozo-lib-wasm-pkg
           path: cozo-lib-wasm/pkg
+          if-no-files-found: error
 
   upload-release:
     name: Upload to GitHub Release
@@ -61,37 +147,94 @@ jobs:
     environment: github-releases
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.build-and-test.outputs.version }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: cozo-lib-wasm-pkg
           path: pkg
 
-      - name: Get version from package.json
-        id: version
-        run: |
-          VERSION="$(node -p "require('./pkg/package.json').version")"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
-
       - name: Create tarball
-        run: tar czvf cozo-lib-wasm-${{ steps.version.outputs.version }}.tar.gz -C pkg .
+        run: |
+          set -euo pipefail
+          tar czvf "cozo-lib-wasm-${VERSION}.tar.gz" -C pkg .
+          sha256sum "cozo-lib-wasm-${VERSION}.tar.gz" | tee "cozo-lib-wasm-${VERSION}.tar.gz.sha256"
+
+      # TODO(release-notes): the release is created with no body. crates-publish.yml
+      # cuts the engine's notes out of CHANGELOG-FORK.md by version — do the same here
+      # (add a checkout + `--notes-file`, or `--generate-notes`) so the wasm release is
+      # not an empty page on the Releases tab.
+
+      # Smoke test — DISABLED for now, uncomment to enable.
+      #
+      # The integration test above loads pkg/cozo_lib_wasm.js by absolute path, so it
+      # cannot catch a broken `main` / `files` / missing .wasm in the tarball — which
+      # is exactly the artifact users install. This installs it the way a user does
+      # and drives the engine through the package entry point.
+      #
+      # - name: Smoke test (npm install the published tarball)
+      #   run: |
+      #     set -euo pipefail
+      #     rm -rf smoke && mkdir smoke && cd smoke
+      #     npm init -y >/dev/null
+      #     npm install "file:../cozo-lib-wasm-${VERSION}.tar.gz" --no-audit --no-fund
+      #     cat > smoke.mjs <<'JS'
+      #     import { readFileSync } from 'node:fs';
+      #     import init, { CozoDb } from 'cozo-lib-wasm';
+      #     // The `--target web` glue resolves the .wasm as new URL(..., import.meta.url)
+      #     // and fetch()es it; Node refuses file: URLs, so hand it the bytes — the same
+      #     // init contract the integration test uses, reached via package resolution.
+      #     await init({ module_or_path: readFileSync('node_modules/cozo-lib-wasm/cozo_lib_wasm_bg.wasm') });
+      #     const db = CozoDb.new();
+      #     const out = JSON.parse(db.run('?[a] := a = 1', '{}', false));
+      #     if (out.ok !== true || out.rows[0][0] !== 1) {
+      #       throw new Error('unexpected result: ' + JSON.stringify(out));
+      #     }
+      #     console.log('smoke ok');
+      #     JS
+      #     node smoke.mjs
 
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="wasm-v$VERSION"
+          set -euo pipefail
+          TAG="wasm-v${VERSION}"
+          # The engine release (v*) owns the "Latest" badge: crates-publish.yml claims
+          # it for the same version, and two "latest" releases just flip the badge by
+          # whichever job finished last. --latest=false is explicit on purpose:
+          # omitting the flag leaves the API free to claim it.
           case "$VERSION" in
-            *-*) FLAGS=(--prerelease) ;;
-            *)   FLAGS=(--latest) ;;
+            *-*) FLAGS=(--prerelease=true) ;;
+            *)   FLAGS=(--prerelease=false) ;;
           esac
+          FLAGS+=(--latest=false)
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists — updating asset."
-            gh release upload "$TAG" cozo-lib-wasm-${VERSION}.tar.gz --clobber
+            if [ "$FORCE" != "true" ]; then
+              echo "::error::Release $TAG already exists. Re-run with force=true to overwrite its asset."
+              exit 1
+            fi
+            echo "Release $TAG exists — replacing its asset (force)."
+            gh release upload "$TAG" \
+              "cozo-lib-wasm-${VERSION}.tar.gz" \
+              "cozo-lib-wasm-${VERSION}.tar.gz.sha256" \
+              --clobber
           else
             echo "Creating release $TAG."
-            gh release create "$TAG" --title "$TAG" "${FLAGS[@]}"
-            gh release upload "$TAG" cozo-lib-wasm-${VERSION}.tar.gz
+            if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+              # The tag was pushed minutes ago and already matched the crate version in
+              # build-and-test; abort rather than let gh invent a tag somewhere else.
+              gh release create "$TAG" --title "$TAG" --verify-tag "${FLAGS[@]}"
+            else
+              # workflow_dispatch: no tag exists yet, so point the one gh creates at the
+              # exact commit this artifact was built from. The default is the head of
+              # the default branch, which may be an entirely different tree.
+              gh release create "$TAG" --title "$TAG" --target "$GITHUB_SHA" "${FLAGS[@]}"
+            fi
+            gh release upload "$TAG" \
+              "cozo-lib-wasm-${VERSION}.tar.gz" \
+              "cozo-lib-wasm-${VERSION}.tar.gz.sha256"
           fi

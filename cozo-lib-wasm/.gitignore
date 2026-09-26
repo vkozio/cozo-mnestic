@@ -1,6 +1,8 @@
 /target
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock is intentionally NOT ignored (unlike the repo-root .gitignore default for
+# libraries): the published wasm artifact is built with `-- --locked`, so the dependency
+# set it was tested against has to be pinned in-tree.
 bin/
 pkg/
 wasm-pack.log
