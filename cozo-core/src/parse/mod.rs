@@ -346,7 +346,10 @@ fn parse_error_with_detail(
 /// position reached) to point the span at the real defect and name the tokens
 /// that would fix it. `err.location` alone is often wrong — for `?[a] a = 1` it
 /// points inside the rule head while the defect (the missing `:=`) is later.
-fn pest_error_to_parse_error(src: &str, err: pest::error::Error<Rule>) -> ParseError {
+///
+/// Also used by the language-server surface ([`crate::lsp`]) to turn raw pest
+/// errors into structured diagnostics without re-running the parse.
+pub(crate) fn pest_error_to_parse_error(src: &str, err: pest::error::Error<Rule>) -> ParseError {
     let mut span = match err.location {
         InputLocation::Pos(p) => SourceSpan(p, 0),
         InputLocation::Span((start, end)) => SourceSpan(start, end - start),
