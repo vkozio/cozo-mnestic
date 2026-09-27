@@ -1,0 +1,91 @@
+[package]
+name = "cozo-lib-wasm-next"
+version = "0.18.0"
+edition = "2021"
+description = "Cozo database for WASM, threaded flavour (nightly + atomics + SIMD)"
+authors = ["Ziyang Hu"]
+license = "MPL-2.0"
+homepage = "https://www.cozodb.org"
+repository = "https://github.com/cozodb/cozo"
+documentation = "https://docs.cozodb.org"
+
+# Отдельный крейт = отдельный тулчейн = отдельный Cargo.lock.
+# Правило (docs/plans/wasm-clean-restart.md §5): nightly-сборка этого крейта
+# проверяется только своей джобой и никогда не блокирует stable-ветку.
+# Старый cozo-lib-wasm при этом заморожен (single-thread, stable).
+#
+# Важно: rust-toolchain.toml ниже пинит nightly. rustup выбирает тулчейн
+# по директории, поэтому команды внутри cozo-lib-wasm-next/ автоматически
+# идут через nightly. НЕ запускать stable-команды из этой директории и
+# НЕ запускать nightly-команды из корня — иначе Cargo.lock-и и target-диры
+# перемешаются. См. wasm-build-notes.md §9.
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+mnestic = { path = "../cozo-core", default-features = false, features = ["wasm", "graph-algo"] }
+
+# getrandom 0.2 — direct dependency. Cozo 0.18 uses rand 0.8 -> getrandom 0.2,
+# so the "js" feature is needed for wasm32-unknown-unknown.
+# (Перенесено 1:1 из cozo-lib-wasm/Cargo.toml; см. wasm-build-notes.md §2.)
+getrandom = { version = "0.2", features = ["js", "wasm-bindgen"] }
+
+console_error_panic_hook = { version = "0.1.7", optional = true }
+
+# getrandom 0.3 — transitive via ahash 0.8 (graph -> graph_builder).
+# ВНИМАНИЕ: ahash включает его через `runtime-rng`, для wasm32 нужен `wasm_js`.
+# (Перенесено 1:1; см. wasm-build-notes.md §2.)
+# nanorand 0.7.0 broken on wasm32 without `getrandom`:
+# system() calls backup_entropy(), which only exists with default-features off.
+# (Перенесено 1:1; см. wasm-build-notes.md §1.)
+# Адаптер пула rayon на Web Workers. Версия 1.3.0 требует wasm-bindgen ^0.2.99
+# (совместимо с локнутым 0.2.128) и rayon ^1.8.1 с web_spin_lock.
+# Путь инициализации: JS вызывает init_thread_pool() ДО первого запроса.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+nanorand = { version = "0.7", features = ["getrandom"] }
+wasm-bindgen-rayon = "1.3"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+# patch page_size 0.4.2 — та же причина, что в cozo-lib-wasm:
+# missing stub для non-unix/non-windows (E0425 on get_granularity_helper).
+# Один shim на два крейта: путь указывает на существующий каталог.
+# Vendored graph stack (mnestic NEXT_SESSION wave: R1/graph-vendoring):
+# `graph 0.3.1` + `graph_builder 0.4.1` заброшены upstream (neo4j-labs/graph),
+# блокируют wasm32: `Instant::now` в логах тайминга + `std::thread::scope`
+# в page_rank/triangle_count/edgelist. Вендор = MIT, версии те же, правки
+# только под cfg(target_arch = "wasm32"). Stable-корень патч не видит
+# (этот крейт исключён из workspace, lock отдельный).
+[patch.crates-io]
+page_size = { path = "shim/page_size" }
+graph = { path = "vendor/graph" }
+graph_builder = { path = "vendor/graph_builder" }
+
+# NOTE: осознанно НЕТ [package.metadata.wasm-pack.*]: wasm-pack заброшен
+# upstream, этот крейт собирается вручную через scripts/build.ps1
+# (cargo -> .tools/wasm-bindgen -> .tools/wasm-opt version_133).
+# Встроенный wasm-opt wasm-pack (117) всё равно не переварил бы
+# bulk-memory/threads от современного rustc.
+
+# ---------------------------------------------------------------------------
+# Профиль релиза под threads-флейвор: замеры — только после gzip/brotli
+# (см. wasm-build-notes.md §6). opt-level "s" vs "z" сравнить на сжатом размере.
+# panic = "abort" НЕ включён намеренно: в cozo-core есть catch_unwind
+# (runtime/graph_projection.rs:2383, тест commit-fence) — сначала переписать
+# тест, иначе профиль сломает host-сьюты. См. задание, волна R2c.
+# ---------------------------------------------------------------------------
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1
