@@ -7,6 +7,7 @@
  */
 
 pub(crate) mod callback;
+pub(crate) mod clock;
 #[cfg(feature = "columnar-io")]
 pub(crate) mod columnar;
 pub(crate) mod db;

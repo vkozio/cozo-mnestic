@@ -11,7 +11,9 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::runtime::clock::Instant;
 
 use crossbeam::channel::{bounded, Receiver, Sender};
 use miette::{bail, Diagnostic, Report, Result};

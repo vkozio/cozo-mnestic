@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 #[allow(unused_imports)]
 use std::thread;
 #[allow(unused_imports)]
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[allow(unused_imports)]
 use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
@@ -52,6 +52,7 @@ use crate::query::ra::{
 use crate::runtime::callback::{
     CallbackCollector, CallbackDeclaration, CallbackOp, EventCallbackRegistry,
 };
+use crate::runtime::clock::Instant;
 use crate::runtime::diagnostics::QueryWarning;
 use crate::runtime::graph_projection;
 use crate::runtime::graph_projection::ProjectionCache;
@@ -792,8 +793,7 @@ impl<'s, S: Storage<'s>> Db<S> {
     /// Compute the whole-script deadline from the per-call timeout and the Db
     /// default (mnestic fork, query budget), both anchored at one clock reading.
     /// Returns the earliest (`min`) of whichever are set; `None` if neither is
-    /// set, if the budget overflows `Instant`, or if the target has no monotonic
-    /// clock (wasm).
+    /// set or if the budget overflows `Instant`.
     fn effective_outer_deadline(&self, call_timeout: Option<f64>) -> Option<Instant> {
         let start = budget_now()?;
         let mut deadline = call_timeout.and_then(|secs| deadline_from_secs(start, secs));
@@ -4295,18 +4295,12 @@ pub(crate) fn stranded_index_names(handle: &RelationHandle) -> Vec<String> {
         .collect()
 }
 
-/// monotonic clock is available: wasm has no `std` monotonic `Instant`, so on
-/// that target queries simply carry no time budget rather than panicking on
-/// `Instant::now()` (mnestic fork, query budget).
-#[cfg(not(target_arch = "wasm32"))]
+/// monotonic clock is available: on wasm32 `Instant` is `web_time::Instant`
+/// (performance.now() with a Date.now() fallback, see `runtime::clock`), so
+/// queries carry a real time budget there too (mnestic fork, query budget).
 #[inline]
 fn budget_now() -> Option<Instant> {
     Some(Instant::now())
-}
-#[cfg(target_arch = "wasm32")]
-#[inline]
-fn budget_now() -> Option<Instant> {
-    None
 }
 
 /// The deadline `start + secs`, or `None` if `secs` is non-positive/non-finite

@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use itertools::Itertools;
@@ -668,10 +669,15 @@ pub(crate) fn create(
     deps.sort();
 
     let handle = catalog_for_write(tx)?;
+    // wasm32-unknown-unknown has no `std` wall clock: `SystemTime::now()`
+    // panics at runtime there (mnestic fork, wasm compat).
+    #[cfg(not(target_arch = "wasm32"))]
     let created_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .into_diagnostic()?
         .as_secs_f64();
+    #[cfg(target_arch = "wasm32")]
+    let created_at = js_sys::Date::now() / 1000.;
     let row = vec![
         DataValue::from(name.name.as_str()),
         DataValue::from(body),

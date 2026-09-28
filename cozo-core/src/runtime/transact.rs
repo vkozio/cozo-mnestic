@@ -6,10 +6,10 @@
  * You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use crate::runtime::clock::Instant;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use crate::data::program::ReturnMutation;
 use miette::{bail, Diagnostic, Result};

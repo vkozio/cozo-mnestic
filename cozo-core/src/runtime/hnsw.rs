@@ -892,8 +892,13 @@ impl<'a> SessionTx<'a> {
         if builder.is_empty() {
             return Ok(());
         }
+        // Build profiling clock: `std::time::Instant` panics at runtime on
+        // wasm32-unknown-unknown, and the MNESTIC_BUILD_PROFILE readout is a
+        // native profiling aid — skip the clock on wasm (mnestic fork).
+        #[cfg(not(target_arch = "wasm32"))]
         let build_start = std::time::Instant::now();
         let graph = builder.build(manifest, build_threads());
+        #[cfg(not(target_arch = "wasm32"))]
         let insert_elapsed = build_start.elapsed();
 
         // Serialise: per node × level, one self row + one row per out-edge.
@@ -971,6 +976,7 @@ impl<'a> SessionTx<'a> {
                 idx_table.encode_val_only_for_store(&canary_value, Default::default())?;
             self.idx_put(idx_table, &canary_key_bytes, &canary_value_bytes)?;
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if std::env::var_os("MNESTIC_BUILD_PROFILE").is_some() {
             eprintln!(
                 "hnsw bulk build: {} nodes, graph {:?}, serialise {:?}",

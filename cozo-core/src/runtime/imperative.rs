@@ -6,9 +6,9 @@
  * You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use crate::runtime::clock::Instant;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
-use std::time::Instant;
 
 use either::{Either, Left, Right};
 use itertools::Itertools;
