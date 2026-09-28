@@ -97,6 +97,8 @@ pub use runtime::temp_store::RegularTempStore;
 pub use storage::mem::{new_cozo_mem, MemStorage};
 #[cfg(feature = "storage-new-rocksdb")]
 pub use storage::newrocks::{new_cozo_newrocksdb, NewRocksDbStorage};
+#[cfg(feature = "storage-redb")]
+pub use storage::re::{new_cozo_redb, new_cozo_redb_mem, RedbStorage};
 #[cfg(feature = "storage-rocksdb")]
 pub use storage::rocks::{
     new_cozo_rocksdb, new_cozo_rocksdb_with_memory, process_default_rocks_memory, RocksDbStorage,
@@ -156,6 +158,10 @@ pub(crate) mod utils;
 /// Other methods are wrappers simplifying signatures to deal with only strings.
 /// These methods made code for interop with other languages much easier,
 /// but are not desirable if you are using Rust.
+///
+/// NOTE for backend contributors: adding a variant requires updating every
+/// dispatch site on this enum (~30 matches). `storage-redb` (`RedbStorage`)
+/// is intentionally not wired here yet — use `Db<RedbStorage>` directly.
 #[derive(Clone)]
 pub enum DbInstance {
     /// In memory storage (not persistent)

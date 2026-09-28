@@ -44,6 +44,12 @@ storage-sqlite-src = ["dep:sqlite3-src", "sqlite3-src/bundled"]
 ## You can also [fine-tune](https://github.com/cozodb/cozo/blob/main/TUNING_ROCKSDB.md) RocksDB options.
 storage-rocksdb = ["dep:cozorocks"]
 storage-new-rocksdb = ["dep:rocksdb"]
+## Enables the [redb](https://github.com/cberner/redb) backend.
+## redb is a pure-Rust embedded B-tree in a single file: no C++ toolchain,
+## no vendored submodule, ACID out of the box. Supports time travel.
+## Single-writer (concurrent write transactions are rejected by redb itself),
+## so it fits low-concurrency embedded use, not the RocksDB workload.
+storage-redb = ["dep:redb"]
 ## Enables the graph algorithms.
 graph-algo = ["graph", "rayon"]
 ## Registers CsvReader and JsonReader, which allow queries to read arbitrary
@@ -202,6 +208,7 @@ rayon = { version = ">=1.10.0, <1.11", optional = true }
 minreq = { version = "2.11.2", features = ["https-rustls"], optional = true }
 tikv-jemallocator-global = { version = "0.5.0", optional = true }
 rocksdb = { version = "0.22.0", optional = true }
+redb = { version = "4.0.0", optional = true }
 sled = { version = "0.34.7", optional = true }
 tikv-client = { version = "0.3.0", optional = true }
 tokio = { version = "1.37.0", optional = true }
