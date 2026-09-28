@@ -82,7 +82,7 @@ graph_builder = { path = "vendor/graph_builder" }
 # тест, иначе профиль сломает host-сьюты. См. задание, волна R2c.
 # ---------------------------------------------------------------------------
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true

@@ -120,8 +120,8 @@ Write-Host "== patched worker bootstrap: $needle -> $fixed"
 #    i64.trunc_sat_f64_s (saturating float-to-int), and without the flag the
 #    validator fails with "all used features should be allowed".
 if (-not $SkipWasmOpt) {
-    Write-Host "== wasm-opt -O3 --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int"
-    & $optExe -O3 --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int $bgWasm -o $bgWasm
+    Write-Host "== wasm-opt -Oz --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int"
+    & $optExe -Oz --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int $bgWasm -o $bgWasm
     if ($LASTEXITCODE -ne 0) { throw "wasm-opt failed ($LASTEXITCODE)" }
     "Optimized wasm: {0:N0} bytes" -f (Get-Item $bgWasm).Length
 }
