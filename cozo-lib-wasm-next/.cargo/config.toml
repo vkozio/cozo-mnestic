@@ -1,0 +1,27 @@
+# threads-флейвор: nightly + atomics/SIMD + shared memory.
+# Действует ТОЛЬКО внутри cozo-lib-wasm-next/ (rust-toolchain.toml пинит nightly
+# для этой директории). НЕ копировать в корень — иначе stable-сборка сломается.
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128",
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--import-memory",
+    # Явный экспорт инициализатора памяти (--export=__wasm_init_memory из гайда §2)
+    # УБРАН 2026-09-27: rust-lld nightly-2026-09-25 отвечает
+    # "symbol exported via --export not found: __wasm_init_memory".
+    # std с atomics экспортирует только TLS-символы ниже; при --import-memory
+    # память и так приходит из JS. Если на другом nightly линковка пожалуется
+    # на отсутствие __wasm_init_memory — вернуть флаг и перепроверить.
+    "-C", "link-arg=--export=__wasm_init_tls",
+    "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
+    "-C", "link-arg=--export=__tls_base",
+    # Границы линейной памяти (см. гайд §2 п.4): начальные 64 MiB, потолок
+    # 2 GiB вместо архитектурных 4 GiB — WebKit/мобильный Chromium часто
+    # реджектят SharedArrayBuffer больше ~2 GiB.
+    "-C", "link-arg=--initial-memory=67108864",
+    "-C", "link-arg=--max-memory=2147483648",
+]
+
+[unstable]
+build-std = ["panic_abort", "std"]

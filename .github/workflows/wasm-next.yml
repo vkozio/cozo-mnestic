@@ -1,0 +1,71 @@
+# Nightly threaded-WASM build for cozo-lib-wasm-next ONLY.
+#
+# Never blocks stable: separate workflow, path-filtered to
+# cozo-lib-wasm-next/**, not a required check. Stable CI (build.yml,
+# wasm-release.yml) is untouched.
+#
+# Pipeline mirrors the local one (see cozo-lib-wasm-next/NEXT_SESSION.md):
+#   scripts/fetch-tools.ps1 -> scripts/build.ps1 -Configuration Release
+# Runs on windows-latest because both scripts are the Windows-edition
+# pipeline (cargo -> .tools/wasm-bindgen -> .tools/wasm-opt).
+
+name: wasm-next
+
+on:
+  push:
+    paths:
+      - "cozo-lib-wasm-next/**"
+      - ".github/workflows/wasm-next.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: wasm-next-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  build-threaded:
+    name: Build threaded WASM pkg (nightly)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-25
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Bootstrap .tools (wasm-bindgen + wasm-opt)
+        run: cozo-lib-wasm-next/scripts/fetch-tools.ps1
+
+      - name: Release build (cargo -> wasm-bindgen -> wasm-opt)
+        run: cozo-lib-wasm-next/scripts/build.ps1 -Configuration Release
+
+      # Probes stay manual: all 21 are green locally since session 7
+      # (vendored graph shims — see WORKLOG), but CI has no browser to
+      # verify the real worker pool, only the Node single-thread fallback.
+      # Smoke-check the pool export instead: without initThreadPool in the
+      # JS glue the threaded contract is broken.
+      - name: Verify initThreadPool export
+        run: |
+          Select-String -Pattern "initThreadPool" `
+            -Path "cozo-lib-wasm-next/pkg/cozo_lib_wasm_next.js", `
+                    "cozo-lib-wasm-next/pkg/cozo_lib_wasm_next.d.ts" `
+            | Select-Object Filename, LineNumber
+
+      - name: Upload pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cozo-lib-wasm-next-pkg
+          path: cozo-lib-wasm-next/pkg
+          if-no-files-found: error

@@ -1,0 +1,5 @@
+# cozo-lib-wasm-next local scratch (never commit).
+/.tools/
+/target/
+/pkg/
+/dist/

@@ -1,0 +1,7 @@
+[toolchain]
+# Threads-флейвор живёт только на nightly: wasm-bindgen-rayon требует
+# -Z build-std, а shared memory — +atomics. Пиним конкретный nightly,
+# чтобы сборка не ломалась от случайного обновления тулчейна.
+channel = "nightly-2026-09-25"
+components = ["rust-src"]
+targets = ["wasm32-unknown-unknown"]

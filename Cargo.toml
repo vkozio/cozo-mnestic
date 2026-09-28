@@ -13,6 +13,7 @@ exclude = [
     "cozo-lib-c",
     "cozo-lib-java",
     "cozo-lib-wasm",
+    "cozo-lib-wasm-next",
     "cozo-lib-swift",
     "cozo-lib-python",
     "cozo-lib-nodejs",

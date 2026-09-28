@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cozo-lib-wasm-next — threaded demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 60em; margin: 2em auto; }
+  #out { white-space: pre-wrap; background: #f4f4f4; padding: 1em; }
+  .ok { color: #0a0; } .bad { color: #a00; }
+</style>
+</head>
+<body>
+<h1>cozo-lib-wasm-next — threaded demo</h1>
+<p>Scenario: <code>init()</code> → <code>initThreadPool(hardwareConcurrency)</code> →
+<code>CozoDb.new()</code> → one query. Requires COOP/COEP (see <code>demo/serve.mjs</code>).</p>
+<div id="out">loading…</div>
+<script type="module">
+  import init, { initThreadPool, CozoDb } from '../pkg/cozo_lib_wasm_next.js';
+
+  const out = document.getElementById('out');
+  const log = (o) => { out.textContent += '\n' + JSON.stringify(o); };
+
+  out.textContent = JSON.stringify({
+    crossOriginIsolated,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    sharedArrayBuffer: typeof SharedArrayBuffer,
+  });
+
+  await init();
+  log({ init: 'ok' });
+
+  // The pool MUST start before the first query; without COOP/COEP this throws
+  // (or falls back to single-threaded execution, same as cozo-lib-wasm).
+  await initThreadPool(navigator.hardwareConcurrency);
+  log({ initThreadPool: 'ok', threads: navigator.hardwareConcurrency });
+
+  const db = CozoDb.new();
+  const res = JSON.parse(db.run('?[a] := a = 1', '{}', false));
+  log({ query: '?[a] := a = 1', ok: res.ok, rows: res.rows });
+
+  out.classList.add(res.ok && res.rows[0][0] === 1 ? 'ok' : 'bad');
+</script>
+</body>
+</html>
