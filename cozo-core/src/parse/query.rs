@@ -73,6 +73,18 @@ struct DuplicateQueryAssertion(#[label] SourceSpan);
 #[diagnostic(code(parser::multiple_yields))]
 struct DuplicateYield(#[label] SourceSpan);
 
+/// A program carries exactly one `store_relation`, so a second relation option
+/// used to overwrite the first with no diagnostic — the `:create` vanished and
+/// the failure surfaced later as `relation_not_found` blaming the `:put`.
+#[derive(Debug, Error, Diagnostic)]
+#[error("A query can only have one stored relation")]
+#[diagnostic(code(parser::multiple_store_relation))]
+#[diagnostic(help(
+    "Each script may contain at most one relation option (`:create`, `:put`, `:rm`, …). \
+    Run the `:create` in its own `run()` call, then the DML in a second."
+))]
+struct DuplicateStoredRelation(#[label] SourceSpan);
+
 impl Error for MultipleRuleDefinitionError {}
 
 impl Display for MultipleRuleDefinitionError {
@@ -362,6 +374,7 @@ pub(crate) fn parse_query(
             }
             Rule::relation_option => {
                 let span = pair.extract_span();
+                ensure!(stored_relation.is_none(), DuplicateStoredRelation(span));
                 let mut args = pair.into_inner();
                 let op = match args.next().unwrap().as_rule() {
                     Rule::relation_create => RelationOp::Create,

@@ -1217,7 +1217,9 @@ fn tokenizers() {
 
     println!("XXXXXXXXXXXXX");
 
-    let tokenizer = tokenizers
+    #[cfg(feature = "fts-cangjie")]
+    {
+        let tokenizer = tokenizers
         .get(
             "cangjie",
             &TokenizerConfig {
@@ -1231,6 +1233,7 @@ fn tokenizers() {
     let mut token_stream = tokenizer.token_stream("这个产品Finchat.io是一个相对比较有特色的文档问答类网站，它集成了750多家公司的经融数据。感觉是把财报等数据借助Embedding都向量化了，然后接入ChatGPT进行对话。");
     while let Some(token) = token_stream.next() {
         println!("Token {:?}", token.text);
+    }
     }
 }
 

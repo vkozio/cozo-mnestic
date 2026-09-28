@@ -2489,10 +2489,15 @@ pub(crate) fn op_format_timestamp(args: &[DataValue]) -> Result<DataValue> {
             let tz_s = tz_v.get_str().ok_or_else(|| {
                 miette!("'format_timestamp' timezone specification requires a string")
             })?;
-            let tz = chrono_tz::Tz::from_str(tz_s)
-                .map_err(|_| miette!("bad timezone specification: {}", tz_s))?;
-            let dt_tz = dt.with_timezone(&tz);
-            let s = SmartString::from(dt_tz.to_rfc3339());
+            // Reuse the shared tz parser so tier 1+2 behave identically both ways.
+            let spec = dt_tz(&[DataValue::from(tz_s)], 0, "format_timestamp")?;
+            let zoned: Zoned = match spec {
+                TzSpec::Utc => Zoned::Utc(dt),
+                TzSpec::Fixed(off) => Zoned::Fixed(dt.with_timezone(&off)),
+                #[cfg(feature = "dt-tz")]
+                TzSpec::Iana(tz) => Zoned::Iana(dt.with_timezone(&tz)),
+            };
+            let s = SmartString::from(zoned.to_rfc3339());
             Ok(DataValue::Str(s))
         }
         None => {
@@ -2588,24 +2593,235 @@ fn dt_instant(v: &DataValue, fn_name: &str) -> Result<DateTime<Utc>> {
         .ok_or_else(|| miette!("timestamp out of range for '{fn_name}': {f}"))
 }
 
+// ---- dt-tz gating: IANA tables optional (wasm size) ----
+//
+// Tier 1+2 (UTC, Z, fixed offsets) work in BOTH configs with identical results.
+// Tier 3 (IANA names) needs `dt-tz` (default on); without it IANA bails with
+// an actionable message. Single `Zoned`/`TzSpec` enums in both configs — the
+// IANA variant is cfg-gated, so the no-feature build pulls zero tables.
+#[derive(Clone, Copy, Debug)]
+enum TzSpec {
+    Utc,
+    Fixed(chrono::FixedOffset),
+    #[cfg(feature = "dt-tz")]
+    Iana(chrono_tz::Tz),
+}
+
+#[derive(Clone, Debug)]
+enum Zoned {
+    Utc(DateTime<Utc>),
+    Fixed(DateTime<chrono::FixedOffset>),
+    #[cfg(feature = "dt-tz")]
+    Iana(DateTime<chrono_tz::Tz>),
+}
+
+fn tz_error(s: &str) -> miette::Report {
+    miette!(
+        "bad timezone specification: '{s}' (IANA zones require the `dt-tz` feature; UTC and fixed offsets like 'UTC+3' work without it)"
+    )
+}
+
+/// Tier 1+2 only, shared by both configs. `Ok(Some)` = UTC/fixed offset,
+/// `Ok(None)` = needs IANA tables, `Err` = malformed offset/range.
+fn parse_tier12(s: &str) -> Result<Option<TzSpec>> {
+    use chrono::FixedOffset;
+    let t = s.trim();
+    // Tier 1 — always: UTC + Z.
+    if t.eq_ignore_ascii_case("utc") || t == "Z" || t == "z" {
+        return Ok(Some(TzSpec::Utc));
+    }
+    // Strip optional UTC prefix (case-insensitive) for tier 2.
+    let rest = if t.len() >= 3 && t[..3].eq_ignore_ascii_case("utc") {
+        &t[3..]
+    } else {
+        t
+    };
+    if rest.starts_with('+') || rest.starts_with('-') {
+        let sign: i32 = if rest.starts_with('-') { -1 } else { 1 };
+        let body = &rest[1..];
+        let (h, m, sec): (u32, u32, u32) = if body.contains(':') {
+            let parts: Vec<&str> = body.split(':').collect();
+            if parts.len() < 2 || parts.len() > 3 {
+                bail!("bad timezone specification: {}", s);
+            }
+            let hh: u32 = parts[0]
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            let mm: u32 = parts[1]
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            let ss: u32 = if parts.len() == 3 {
+                parts[2]
+                    .parse()
+                    .map_err(|_| miette!("bad timezone specification: {}", s))?
+            } else {
+                0
+            };
+            (hh, mm, ss)
+        } else if body.len() <= 2 {
+            let hh: u32 = body
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            (hh, 0, 0)
+        } else if body.len() == 3 {
+            let hh: u32 = body[..1]
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            let mm: u32 = body[1..]
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            (hh, mm, 0)
+        } else if body.len() == 4 {
+            let hh: u32 = body[..2]
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            let mm: u32 = body[2..]
+                .parse()
+                .map_err(|_| miette!("bad timezone specification: {}", s))?;
+            (hh, mm, 0)
+        } else {
+            bail!("bad timezone specification: {}", s);
+        };
+        if h > 23 || m > 59 || sec > 59 {
+            bail!("bad timezone specification: {}", s);
+        }
+        let total = (h * 3600 + m * 60 + sec) as i32 * sign;
+        if total.abs() > 86399 {
+            bail!("bad timezone specification: {}", s);
+        }
+        let off = FixedOffset::east_opt(total)
+            .ok_or_else(|| miette!("bad timezone specification: {}", s))?;
+        return Ok(Some(TzSpec::Fixed(off)));
+    }
+    Ok(None)
+}
+
+impl Zoned {
+    fn year(&self) -> i32 {
+        match self {
+            Zoned::Utc(d) => d.year(),
+            Zoned::Fixed(d) => d.year(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.year(),
+        }
+    }
+    fn month(&self) -> u32 {
+        match self {
+            Zoned::Utc(d) => d.month(),
+            Zoned::Fixed(d) => d.month(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.month(),
+        }
+    }
+    fn day(&self) -> u32 {
+        match self {
+            Zoned::Utc(d) => d.day(),
+            Zoned::Fixed(d) => d.day(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.day(),
+        }
+    }
+    fn hour(&self) -> u32 {
+        match self {
+            Zoned::Utc(d) => d.hour(),
+            Zoned::Fixed(d) => d.hour(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.hour(),
+        }
+    }
+    fn minute(&self) -> u32 {
+        match self {
+            Zoned::Utc(d) => d.minute(),
+            Zoned::Fixed(d) => d.minute(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.minute(),
+        }
+    }
+    fn second(&self) -> u32 {
+        match self {
+            Zoned::Utc(d) => d.second(),
+            Zoned::Fixed(d) => d.second(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.second(),
+        }
+    }
+    fn weekday(&self) -> chrono::Weekday {
+        match self {
+            Zoned::Utc(d) => d.weekday(),
+            Zoned::Fixed(d) => d.weekday(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.weekday(),
+        }
+    }
+    fn ordinal(&self) -> u32 {
+        match self {
+            Zoned::Utc(d) => d.ordinal(),
+            Zoned::Fixed(d) => d.ordinal(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.ordinal(),
+        }
+    }
+    fn offset_fix(&self) -> chrono::FixedOffset {
+        match self {
+            Zoned::Utc(d) => d.offset().fix(),
+            Zoned::Fixed(d) => d.offset().fix(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.offset().fix(),
+        }
+    }
+    fn timestamp_micros(&self) -> i64 {
+        match self {
+            Zoned::Utc(d) => d.timestamp_micros(),
+            Zoned::Fixed(d) => d.timestamp_micros(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.timestamp_micros(),
+        }
+    }
+    fn to_rfc3339(&self) -> String {
+        match self {
+            Zoned::Utc(d) => d.to_rfc3339(),
+            Zoned::Fixed(d) => d.to_rfc3339(),
+            #[cfg(feature = "dt-tz")]
+            Zoned::Iana(d) => d.to_rfc3339(),
+        }
+    }
+}
+
 /// Read the optional trailing timezone argument at `tz_pos`, defaulting to UTC.
-fn dt_tz(args: &[DataValue], tz_pos: usize, fn_name: &str) -> Result<chrono_tz::Tz> {
+/// Tier 1+2 identical in both configs; tier 3 (IANA) needs `dt-tz`.
+fn dt_tz(args: &[DataValue], tz_pos: usize, fn_name: &str) -> Result<TzSpec> {
     match args.get(tz_pos) {
-        None => Ok(chrono_tz::Tz::UTC),
+        None => Ok(TzSpec::Utc),
         Some(v) => {
             let s = v
                 .get_str()
                 .ok_or_else(|| miette!("'{fn_name}' timezone specification requires a string"))?;
-            chrono_tz::Tz::from_str(s).map_err(|_| miette!("bad timezone specification: {}", s))
+            if let Some(spec) = parse_tier12(s)? {
+                return Ok(spec);
+            }
+            #[cfg(feature = "dt-tz")]
+            {
+                return chrono_tz::Tz::from_str(s)
+                    .map(TzSpec::Iana)
+                    .map_err(|_| miette!("bad timezone specification: {}", s));
+            }
+            #[cfg(not(feature = "dt-tz"))]
+            {
+                return Err(tz_error(s));
+            }
         }
     }
 }
 
 /// Timestamp arg + optional tz arg → zone-aware datetime.
-fn dt_zoned(args: &[DataValue], tz_pos: usize, fn_name: &str) -> Result<DateTime<chrono_tz::Tz>> {
+fn dt_zoned(args: &[DataValue], tz_pos: usize, fn_name: &str) -> Result<Zoned> {
     let dt = dt_instant(&args[0], fn_name)?;
-    let tz = dt_tz(args, tz_pos, fn_name)?;
-    Ok(dt.with_timezone(&tz))
+    match dt_tz(args, tz_pos, fn_name)? {
+        TzSpec::Utc => Ok(Zoned::Utc(dt)),
+        TzSpec::Fixed(off) => Ok(Zoned::Fixed(dt.with_timezone(&off))),
+        #[cfg(feature = "dt-tz")]
+        TzSpec::Iana(tz) => Ok(Zoned::Iana(dt.with_timezone(&tz))),
+    }
 }
 
 /// Map a naive local wall-clock time back to an instant. DST rules (documented
@@ -2625,37 +2841,54 @@ fn dt_zoned(args: &[DataValue], tz_pos: usize, fn_name: &str) -> Result<DateTime
 ///   whole hours — the hourly phase therefore still lands exactly on the gap
 ///   end).
 fn dt_resolve_local(
-    tz: chrono_tz::Tz,
+    tz: TzSpec,
     naive: NaiveDateTime,
-    prefer_offset: Option<chrono::FixedOffset>,
+    #[allow(unused_variables)] prefer_offset: Option<chrono::FixedOffset>,
     fn_name: &str,
-) -> Result<DateTime<chrono_tz::Tz>> {
-    let pick =
-        |earliest: DateTime<chrono_tz::Tz>, latest: DateTime<chrono_tz::Tz>| match prefer_offset {
-            Some(off) if latest.offset().fix() == off => latest,
-            _ => earliest,
-        };
-    match tz.from_local_datetime(&naive) {
-        LocalResult::Single(dt) => Ok(dt),
-        LocalResult::Ambiguous(earliest, latest) => Ok(pick(earliest, latest)),
-        LocalResult::None => {
-            let quarter_hours = (1..=16i64).map(|s| 15 * s);
-            let hours = (5..=26i64).map(|h| 60 * h);
-            for minutes in quarter_hours.chain(hours) {
-                match tz.from_local_datetime(&(naive + Duration::minutes(minutes))) {
-                    LocalResult::Single(dt) => return Ok(dt),
-                    // A gap exit is unambiguous about which instant is "first";
-                    // the preference never applies here.
-                    LocalResult::Ambiguous(earliest, _) => return Ok(earliest),
-                    LocalResult::None => continue,
+) -> Result<Zoned> {
+    // Constant offsets never fold or gap — trivial path, DST impossible.
+    match tz {
+        TzSpec::Utc => match Utc.from_local_datetime(&naive) {
+            LocalResult::Single(dt) => Ok(Zoned::Utc(dt)),
+            _ => bail!("'{fn_name}': cannot resolve local time {naive} in UTC"),
+        },
+        TzSpec::Fixed(off) => match off.from_local_datetime(&naive) {
+            LocalResult::Single(dt) => Ok(Zoned::Fixed(dt)),
+            _ => bail!("'{fn_name}': cannot resolve local time {naive} in timezone {off}"),
+        },
+        #[cfg(feature = "dt-tz")]
+        TzSpec::Iana(tz) => {
+            let pick = |earliest: DateTime<chrono_tz::Tz>, latest: DateTime<chrono_tz::Tz>| {
+                match prefer_offset {
+                    Some(off) if latest.offset().fix() == off => latest,
+                    _ => earliest,
+                }
+            };
+            match tz.from_local_datetime(&naive) {
+                LocalResult::Single(dt) => Ok(Zoned::Iana(dt)),
+                LocalResult::Ambiguous(earliest, latest) => Ok(Zoned::Iana(pick(earliest, latest))),
+                LocalResult::None => {
+                    let quarter_hours = (1..=16i64).map(|s| 15 * s);
+                    let hours = (5..=26i64).map(|h| 60 * h);
+                    for minutes in quarter_hours.chain(hours) {
+                        match tz.from_local_datetime(&(naive + Duration::minutes(minutes))) {
+                            LocalResult::Single(dt) => return Ok(Zoned::Iana(dt)),
+                            // A gap exit is unambiguous about which instant is "first";
+                            // the preference never applies here.
+                            LocalResult::Ambiguous(earliest, _) => {
+                                return Ok(Zoned::Iana(earliest))
+                            }
+                            LocalResult::None => continue,
+                        }
+                    }
+                    bail!("'{fn_name}': cannot resolve local time {naive} in timezone {tz}")
                 }
             }
-            bail!("'{fn_name}': cannot resolve local time {naive} in timezone {tz}")
         }
     }
 }
 
-fn dt_instant_to_secs(dt: DateTime<chrono_tz::Tz>) -> DataValue {
+fn dt_instant_to_secs(dt: Zoned) -> DataValue {
     DataValue::from(dt.timestamp_micros() as f64 / 1_000_000.)
 }
 
@@ -2664,7 +2897,7 @@ macro_rules! define_dt_component {
         define_op!($const_name, 1, true);
         pub(crate) fn $fn_name(args: &[DataValue]) -> Result<DataValue> {
             let dt = dt_zoned(args, 1, $script_name)?;
-            let extract: fn(&DateTime<chrono_tz::Tz>) -> i64 = $extract;
+            let extract: fn(&Zoned) -> i64 = $extract;
             Ok(DataValue::from(extract(&dt)))
         }
     };
@@ -2692,7 +2925,13 @@ pub(crate) fn op_dt_trunc(args: &[DataValue]) -> Result<DataValue> {
         .get_str()
         .ok_or_else(|| miette!("'dt_trunc' expects a unit string as second argument"))?;
     let tz = dt_tz(args, 2, "dt_trunc")?;
-    let dt = dt_instant(&args[0], "dt_trunc")?.with_timezone(&tz);
+    let instant = dt_instant(&args[0], "dt_trunc")?;
+    let dt: Zoned = match tz {
+        TzSpec::Utc => Zoned::Utc(instant),
+        TzSpec::Fixed(off) => Zoned::Fixed(instant.with_timezone(&off)),
+        #[cfg(feature = "dt-tz")]
+        TzSpec::Iana(tz) => Zoned::Iana(instant.with_timezone(&tz)),
+    };
     // NOT `dt.date_naive()`: that path is `checked_add_offset(...).expect(...)`
     // and PANICS when instant+offset exits NaiveDateTime's range (reachable at
     // both ends of the admitted range with any offset zone). The Datelike
@@ -2741,7 +2980,8 @@ pub(crate) fn op_dt_trunc(args: &[DataValue]) -> Result<DataValue> {
     // arm as the input — pass the input's own offset as the disambiguator.
     // Coarser units keep the documented earliest-occurrence policy (their
     // target local midnight legitimately predates the transition).
-    let prefer_offset = matches!(unit, "hour" | "minute" | "second").then(|| dt.offset().fix());
+    // (Constant offsets never fold; the offset is API symmetry only.)
+    let prefer_offset = matches!(unit, "hour" | "minute" | "second").then(|| dt.offset_fix());
     Ok(dt_instant_to_secs(dt_resolve_local(
         tz,
         naive,
@@ -2878,9 +3118,13 @@ pub(crate) fn op_dt_format(args: &[DataValue]) -> Result<DataValue> {
         .parse()
         .map_err(|_| miette!("bad strftime format string for 'dt_format': {}", fmt))?;
     let dt = dt_zoned(args, 2, "dt_format")?;
-    Ok(DataValue::Str(SmartString::from(
-        dt.format_with_items(items.iter()).to_string(),
-    )))
+    let s = match &dt {
+        Zoned::Utc(d) => d.format_with_items(items.iter()).to_string(),
+        Zoned::Fixed(d) => d.format_with_items(items.iter()).to_string(),
+        #[cfg(feature = "dt-tz")]
+        Zoned::Iana(d) => d.format_with_items(items.iter()).to_string(),
+    };
+    Ok(DataValue::Str(SmartString::from(s)))
 }
 
 define_op!(OP_DT_TO_VALIDITY, 1, true);

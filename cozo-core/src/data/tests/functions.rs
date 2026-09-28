@@ -1532,14 +1532,73 @@ fn test_dt_components() {
 fn test_dt_components_tz() {
     // 2024-01-01T03:30:00Z is 2023-12-31 22:30 in New York (UTC-5)
     let ts = || dt_secs(2024, 1, 1, 3, 30, 0);
-    let ny = || DataValue::from("America/New_York");
-    assert_eq!(op_dt_year(&[ts(), ny()]).unwrap(), DataValue::from(2023));
-    assert_eq!(op_dt_month(&[ts(), ny()]).unwrap(), DataValue::from(12));
-    assert_eq!(op_dt_day(&[ts(), ny()]).unwrap(), DataValue::from(31));
-    assert_eq!(op_dt_hour(&[ts(), ny()]).unwrap(), DataValue::from(22));
-    // Sunday in NY, Monday in UTC
-    assert_eq!(op_dt_dow(&[ts(), ny()]).unwrap(), DataValue::from(7));
+    if cfg!(feature = "dt-tz") {
+        let ny = || DataValue::from("America/New_York");
+        assert_eq!(op_dt_year(&[ts(), ny()]).unwrap(), DataValue::from(2023));
+        assert_eq!(op_dt_month(&[ts(), ny()]).unwrap(), DataValue::from(12));
+        assert_eq!(op_dt_day(&[ts(), ny()]).unwrap(), DataValue::from(31));
+        assert_eq!(op_dt_hour(&[ts(), ny()]).unwrap(), DataValue::from(22));
+        // Sunday in NY, Monday in UTC
+        assert_eq!(op_dt_dow(&[ts(), ny()]).unwrap(), DataValue::from(7));
+    } else {
+        // No IANA tables: fixed-offset equivalent of NY in January (UTC-5).
+        let m5 = || DataValue::from("UTC-5");
+        assert_eq!(op_dt_year(&[ts(), m5()]).unwrap(), DataValue::from(2023));
+        assert_eq!(op_dt_month(&[ts(), m5()]).unwrap(), DataValue::from(12));
+        assert_eq!(op_dt_day(&[ts(), m5()]).unwrap(), DataValue::from(31));
+        assert_eq!(op_dt_hour(&[ts(), m5()]).unwrap(), DataValue::from(22));
+        assert_eq!(op_dt_dow(&[ts(), m5()]).unwrap(), DataValue::from(7));
+        // IANA names bail with the actionable message.
+        let err = op_dt_year(&[ts(), DataValue::from("America/New_York")]).unwrap_err();
+        assert!(
+            err.to_string().contains("dt-tz"),
+            "unexpected error without dt-tz: {err}"
+        );
+    }
     assert!(op_dt_year(&[ts(), DataValue::from("Not/AZone")]).is_err());
+}
+
+#[test]
+fn test_dt_tz_fallback_tiers() {
+    // Tier 1 (always): missing tz, UTC, Z. Tier 2 (always): fixed offsets.
+    // Tier 3 (dt-tz only): IANA names. No `chrono_tz` mention — compiles both ways.
+    let ts = || dt_secs(2024, 1, 1, 3, 30, 0);
+    // Missing tz arg → UTC.
+    assert_eq!(op_dt_year(&[ts()]).unwrap(), DataValue::from(2024));
+    assert_eq!(
+        op_dt_year(&[ts(), DataValue::from("UTC")]).unwrap(),
+        DataValue::from(2024)
+    );
+    assert_eq!(
+        op_dt_year(&[ts(), DataValue::from("Z")]).unwrap(),
+        DataValue::from(2024)
+    );
+    // Fixed offsets: 03:30Z in +03:00 is 06:30 local.
+    assert_eq!(
+        op_dt_hour(&[ts(), DataValue::from("UTC+3")]).unwrap(),
+        DataValue::from(6)
+    );
+    assert_eq!(
+        op_dt_hour(&[ts(), DataValue::from("+03:00")]).unwrap(),
+        DataValue::from(6)
+    );
+    assert_eq!(
+        op_dt_hour(&[ts(), DataValue::from("-0530")]).unwrap(),
+        DataValue::from(22)
+    );
+    if cfg!(feature = "dt-tz") {
+        // With tables: Moscow (UTC+3, no DST in 2024) matches the fixed offset.
+        assert_eq!(
+            op_dt_hour(&[ts(), DataValue::from("Europe/Moscow")]).unwrap(),
+            DataValue::from(6)
+        );
+    } else {
+        let err = op_dt_hour(&[ts(), DataValue::from("Europe/Moscow")]).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bad timezone specification: 'Europe/Moscow' (IANA zones require the `dt-tz` feature; UTC and fixed offsets like 'UTC+3' work without it)"
+        );
+    }
 }
 
 #[test]
@@ -1563,12 +1622,17 @@ fn test_dt_trunc_units() {
     );
     assert!(op_dt_trunc(&[ts(), DataValue::from("fortnight")]).is_err());
     // tz-aware day truncation: 2024-01-01T03:30Z in New York is still 2023-12-31
-    // locally; local midnight is 05:00Z
+    // locally; local midnight is 05:00Z. Without dt-tz use the fixed UTC-5 equivalent.
+    let zone = if cfg!(feature = "dt-tz") {
+        "America/New_York"
+    } else {
+        "UTC-5"
+    };
     assert_eq!(
         op_dt_trunc(&[
             dt_secs(2024, 1, 1, 3, 30, 0),
             DataValue::from("day"),
-            DataValue::from("America/New_York")
+            DataValue::from(zone)
         ])
         .unwrap(),
         dt_secs(2023, 12, 31, 5, 0, 0)
@@ -1576,6 +1640,7 @@ fn test_dt_trunc_units() {
 }
 
 #[test]
+#[cfg(feature = "dt-tz")]
 fn test_dt_trunc_dst_trichotomy() {
     use std::str::FromStr;
 
@@ -1824,11 +1889,17 @@ fn test_dt_format() {
         op_dt_format(&[ts(), DataValue::from("%Y-%m-%d %H:%M:%S")]).unwrap(),
         DataValue::from("2024-05-15 13:45:30")
     );
+    // May in New York is EDT (UTC-4); without dt-tz use the fixed equivalent.
+    let zone = if cfg!(feature = "dt-tz") {
+        "America/New_York"
+    } else {
+        "UTC-4"
+    };
     assert_eq!(
         op_dt_format(&[
             ts(),
             DataValue::from("%Y-%m-%d %H:%M"),
-            DataValue::from("America/New_York")
+            DataValue::from(zone)
         ])
         .unwrap(),
         DataValue::from("2024-05-15 09:45")
@@ -2002,6 +2073,7 @@ fn test_dt_validity_bridge_on_tt_axis() {
 /// idempotent and containing. Pre-fix, the earliest-occurrence policy returned
 /// results a full hour early for second-pass instants.
 #[test]
+#[cfg(feature = "dt-tz")]
 fn test_dt_trunc_dst_fold_prefers_input_offset() {
     use std::str::FromStr;
 
@@ -2054,18 +2126,25 @@ fn test_dt_trunc_dst_fold_prefers_input_offset() {
 fn test_dt_trunc_range_edges_error_not_panic() {
     // first partial week above NaiveDate::MIN (a Thursday): Monday underflows
     assert!(op_dt_trunc(&[DataValue::from(-8334601227800.001), DataValue::from("week")]).is_err());
-    // MIN end + negative-offset zone: local date below NaiveDate::MIN
+    // MIN end + negative-offset zone: local date below NaiveDate::MIN.
+    // IANA names need dt-tz; without it use the fixed-offset equivalents
+    // (Etc/GMT+12 == UTC-12, Pacific/Kiritimati == UTC+14).
+    let (west, east) = if cfg!(feature = "dt-tz") {
+        ("Etc/GMT+12", "Pacific/Kiritimati")
+    } else {
+        ("-12:00", "+14:00")
+    };
     assert!(op_dt_trunc(&[
         DataValue::from(-8334601228799.0),
         DataValue::from("day"),
-        DataValue::from("Etc/GMT+12")
+        DataValue::from(west)
     ])
     .is_err());
     // MAX end + positive-offset zone: local date above NaiveDate::MAX
     assert!(op_dt_trunc(&[
         DataValue::from(8210298412799.0),
         DataValue::from("day"),
-        DataValue::from("Pacific/Kiritimati")
+        DataValue::from(east)
     ])
     .is_err());
 }
@@ -2075,6 +2154,7 @@ fn test_dt_trunc_range_edges_error_not_panic() {
 /// ladder now extends hourly to 26 h. Guarded on the LocalResult so a tzdb
 /// bump that moves the transition fails loudly here.
 #[test]
+#[cfg(feature = "dt-tz")]
 fn test_dt_trunc_resolves_deep_historic_gaps() {
     use std::str::FromStr;
 
