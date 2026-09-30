@@ -334,15 +334,23 @@ pub(crate) fn build_unweighted_csr(
     check_csr_capacity(edge_list.len(), undirected, indices.len(), edge_span)?;
 
     let node_count = has_nodes.then_some(indices.len());
+    // No edges and no interned vertices: express a true zero-vertex graph via
+    // the fork's `DirectedCsrGraph::empty()` instead of the builder, whose
+    // `max_node_id()` identity (`0 + 1`) would emit a phantom one-vertex CSR.
+    let is_empty = edge_list.is_empty() && indices.is_empty();
     let it = if undirected {
         Right(edge_list.into_iter().flat_map(|(f, t)| [(f, t), (t, f)]))
     } else {
         Left(edge_list.into_iter())
     };
     let builder = GraphBuilder::new().csr_layout(CsrLayout::Sorted).edges(it);
-    let graph: DirectedCsrGraph<u32> = match node_count {
-        Some(n) if n > 0 => builder.node_values(vec![(); n]).build(),
-        _ => builder.build(),
+    let graph: DirectedCsrGraph<u32> = if is_empty {
+        DirectedCsrGraph::empty()
+    } else {
+        match node_count {
+            Some(n) if n > 0 => builder.node_values(vec![(); n]).build(),
+            _ => builder.build(),
+        }
     };
     Ok((graph, indices, inv_indices))
 }
@@ -405,6 +413,10 @@ pub(crate) fn build_weighted_csr(
     check_csr_capacity(edge_list.len(), undirected, indices.len(), edge_span)?;
 
     let node_count = has_nodes.then_some(indices.len());
+    // Same zero-vertex rule as [`build_unweighted_csr`]: no edges and no
+    // interned vertices build `DirectedCsrGraph::empty()`, never the
+    // builder's phantom one-vertex CSR.
+    let is_empty = edge_list.is_empty() && indices.is_empty();
     let it = if undirected {
         Right(
             edge_list
@@ -417,9 +429,13 @@ pub(crate) fn build_weighted_csr(
     let builder = GraphBuilder::new()
         .csr_layout(CsrLayout::Sorted)
         .edges_with_values(it);
-    let graph: DirectedCsrGraph<u32, (), f32> = match node_count {
-        Some(n) if n > 0 => builder.node_values(vec![(); n]).build(),
-        _ => builder.build(),
+    let graph: DirectedCsrGraph<u32, (), f32> = if is_empty {
+        DirectedCsrGraph::empty()
+    } else {
+        match node_count {
+            Some(n) if n > 0 => builder.node_values(vec![(); n]).build(),
+            _ => builder.build(),
+        }
     };
     Ok((graph, indices, inv_indices, has_negative))
 }

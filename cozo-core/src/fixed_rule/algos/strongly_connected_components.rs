@@ -51,10 +51,10 @@ impl FixedRule for StronglyConnectedComponent {
         let indices = source.indices();
         let inv_indices = source.inv_indices();
 
-        // An empty edge relation yields a graph with one phantom vertex (the vendored builder
-        // sizes it from the largest edge endpoint, and `max_node_id()` of an empty edge list is
-        // 0), which Tarjan would report as a component with no value behind it. The optional
-        // node relation below must still be emitted, so only the Tarjan call is skipped.
+        // An empty edge relation builds a zero-vertex graph (fork's
+        // `DirectedCsrGraph::empty()`), so there is nothing for Tarjan to run
+        // on. The optional node relation below must still be emitted, so only
+        // the Tarjan call is skipped.
         let tarjan = if indices.is_empty() {
             vec![]
         } else {

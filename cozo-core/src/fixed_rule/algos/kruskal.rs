@@ -69,7 +69,7 @@ impl FixedRule for MinimumSpanningForestKruskal {
 fn kruskal(edges: &DirectedCsrGraph<u32, (), f32>, poison: Poison) -> Result<Vec<(u32, u32, f32)>> {
     let mut pq = PriorityQueue::new();
     let mut uf = UnionFind::new(edges.node_count());
-    let mut mst = Vec::with_capacity((edges.node_count() - 1) as usize);
+    let mut mst = Vec::with_capacity(edges.node_count().saturating_sub(1) as usize);
     for from in 0..edges.node_count() {
         for target in edges.out_neighbors_with_values(from) {
             let to = target.target;

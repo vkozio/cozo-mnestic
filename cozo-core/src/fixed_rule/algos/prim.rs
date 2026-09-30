@@ -109,7 +109,7 @@ fn prim(
     poison: Poison,
 ) -> Result<Vec<(u32, u32, f32)>> {
     let mut visited = vec![false; graph.node_count() as usize];
-    let mut mst_edges = Vec::with_capacity((graph.node_count() - 1) as usize);
+    let mut mst_edges = Vec::with_capacity(graph.node_count().saturating_sub(1) as usize);
     let mut pq = PriorityQueue::new();
 
     let mut relax_edges_at_node = |node: u32, pq: &mut PriorityQueue<_, _>| {
@@ -127,7 +127,7 @@ fn prim(
     relax_edges_at_node(starting, &mut pq);
 
     while let Some((to_node, (Reverse(OrderedFloat(cost)), from_node))) = pq.pop() {
-        if mst_edges.len() == (graph.node_count() - 1) as usize {
+        if mst_edges.len() == graph.node_count().saturating_sub(1) as usize {
             break;
         }
         mst_edges.push((from_node, to_node, cost));

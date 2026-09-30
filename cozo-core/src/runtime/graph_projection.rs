@@ -554,10 +554,9 @@ pub enum GraphVariant {
 /// makes its dense `u32` ids meaningful. Handed to algorithms as
 /// [`GraphSource`] whether it came from the cache or was just built.
 ///
-/// **Emptiness is `indices().is_empty()`, never `node_count() == 0`.** The
-/// vendored crate cannot express a zero-vertex CSR (`Csr::new` is private), so
-/// an empty edge relation with no `nodes` yields a phantom one-vertex graph
-/// whose single id names nothing.
+/// **Emptiness is `indices().is_empty()` (equivalently `node_count() == 0`).**
+/// An empty edge relation with no `nodes` builds a true zero-vertex CSR via
+/// the fork's `DirectedCsrGraph::empty()` — no phantom vertex.
 #[cfg(feature = "graph-algo")]
 pub struct ProjectionVariant {
     graph: GraphVariant,
@@ -1370,9 +1369,10 @@ pub(crate) fn sysop_list_graphs(tx: &SessionTx<'_>) -> Result<crate::NamedRows> 
     Ok(crate::NamedRows::new(headers, rows))
 }
 
-/// Graph projections need the vendored `graph` crate, which rides on the
-/// `graph-algo` feature. The grammar parses `::graph …` unconditionally so that
-/// a feature-poor build says *why* it cannot run the script.
+/// Graph projections need the `graph` crate (mnestic fork, patched in at the
+/// workspace root), which rides on the `graph-algo` feature. The grammar
+/// parses `::graph …` unconditionally so that a feature-poor build says *why*
+/// it cannot run the script.
 #[cfg(not(feature = "graph-algo"))]
 mod without_graph_algo {
     use miette::{bail, Result};
@@ -2707,11 +2707,12 @@ mod cache_tests {
         assert_eq!(counts(&fetch(&db, "g", DIRECTED).unwrap()), (5, 4));
     }
 
-    /// §3.7.5, load-bearing for Phase 3: the vendored crate cannot express a
-    /// zero-vertex CSR, so an empty source yields a phantom vertex. Consumers
-    /// must test `indices().is_empty()`, never `node_count() == 0`.
+    /// §3.7.5, load-bearing for Phase 3: an empty source builds a true
+    /// zero-vertex CSR (fork's `DirectedCsrGraph::empty()`), so `node_count()`
+    /// and `indices()` agree on emptiness. Consumers keep testing
+    /// `indices().is_empty()` — it also covers `nodes:`-only isolates.
     #[test]
-    fn an_empty_edge_relation_yields_a_phantom_vertex_and_no_indices() {
+    fn an_empty_edge_relation_yields_a_zero_vertex_graph_and_no_indices() {
         let db = new_cozo_mem().unwrap();
         run(&db, ":create knows {a: Int, b: Int}").unwrap();
         run(&db, ":create person {p: Int}").unwrap();
@@ -2719,12 +2720,12 @@ mod cache_tests {
         define(&db, "bare", "knows", None).unwrap();
         let g = fetch(&db, "bare", DIRECTED).unwrap();
         assert!(g.indices().is_empty(), "no vertices were interned");
-        assert_eq!(counts(&g).0, 1, "but the CSR claims one");
+        assert_eq!(counts(&g), (0, 0), "and the CSR claims none either");
 
         define(&db, "with_empty_nodes", "knows", Some("person")).unwrap();
         let g = fetch(&db, "with_empty_nodes", DIRECTED).unwrap();
         assert!(g.indices().is_empty());
-        assert_eq!(counts(&g).0, 1);
+        assert_eq!(counts(&g), (0, 0));
 
         run(&db, "?[p] <- [[7], [8], [9]] :put person {p}").unwrap();
         define(&db, "nodes_only", "knows", Some("person")).unwrap();

@@ -62,7 +62,8 @@ rustc --version                            # must print nightly
 .\scripts\build.ps1 -Configuration Release # production pkg (sizes below)
 ```
 
-Release `pkg/` (2026-09-27; session 7: vendored graph shims included):
+Release `pkg/` (2026-09-27; session 7: vendored graph shims included).
+Sizes below are pre-fork — remeasure after the first `mnestic/wasm.1` build:
 raw 7.37 MB → bindgen 6.56 MB → `wasm-opt -O3` 6.22 MB.
 Compressed `*_bg.wasm` (6,217,260 bytes): gzip-9 **1,935,223 (31.1%)**,
 brotli (≈q11) **1,320,526 (21.2%)** — measured in-process (no gzip/brotli
@@ -132,15 +133,16 @@ known-traps list as a regression tripwire and exits 0.
   `runtime/graph_projection.rs:2383` (commit-fence test). Rewrite that test
   first (plan doc, R2c).
 - `Instant`/`SystemTime` still trap on wasm32 with any toolchain flags —
-  every reachable site is shimmed instead: `web-time` in the vendored
-  `graph` stack, `js_sys::Date` in `cozo-core`, and no time budget on wasm
-  (`budget_now() == None`). Details: `WORKLOG.md` session 7.
-- `page_rank` used `std::thread::scope` — fixed by vendoring (below).
-- `vendor/graph` + `vendor/graph_builder` (`graph 0.3.1` /
-  `graph_builder 0.4.1`, MIT, upstream dormant): `[patch.crates-io]` in this
-  crate only — stable never sees it. wasm-only shims: `web-time` clock for
-  the log timings, sequential chunk-loop fallback for the three runtime
-  `scope` sites. Native code paths are bit-identical to upstream.
+  every reachable site is gated in the fork instead: no-op `Timer` probes in
+  the `graph`/`graph_builder` fork, `js_sys::Date` in `cozo-core`, and no
+  time budget on wasm (`budget_now() == None`).
+- `page_rank` used `std::thread::scope` — fixed in the fork (below).
+- `graph 0.3.2` / `graph_builder 0.4.2` (MIT, upstream dormant) come from the
+  mnestic fork (`vkozio/graph@mnestic/wasm.1`) via `[patch.crates-io]` in
+  this crate only — stable never sees it. Fork deltas vs upstream: no-op
+  log timers on wasm32 (no `web-time`), sequential fallback for the three
+  runtime `scope` sites, public `Csr::empty()`. Native code paths are
+  bit-identical to upstream.
 - `tests/probe/` ports the 21 probes from
   `cozo-lib-wasm/tests/probe/probe.mjs` (`initThreadPool` before the first
   case). Node covers query parity (pool falls back there); the real pool is
@@ -160,6 +162,5 @@ cozo-lib-wasm-next/
   .tools/bin/           # git-ignored: wasm-bindgen 0.2.129, wasm-opt 133
   demo/                 # COOP/COEP static server (serve.mjs) + threaded page
   tests/probe/          # 21 ported probes (probe.mjs) + run-all.ps1
-  vendor/graph + vendor/graph_builder  # vendored graph stack + wasm shims
   README.md / WORKLOG.md / HANDOFF.md
 ```

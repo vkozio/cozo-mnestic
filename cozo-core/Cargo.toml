@@ -200,11 +200,12 @@ arrow-schema = { version = "=59.2.0", default-features = false, features = ["can
 arrow-ipc = { version = "=59.2.0", default-features = false, features = ["lz4", "zstd"], optional = true }
 parquet = { version = "=59.2.0", default-features = false, features = ["arrow", "arrow_canonical_extension_types", "snap", "zstd", "crc"], optional = true }
 document-features = "0.2.8"
-# Upper bound is load-bearing: rayon 1.11 breaks `graph_builder` 0.4.x
-# (the `graph` crate's CSR builder, pulled by `graph-algo`) — its `edges()`
-# par-iter stops compiling. Both crates are dormant upstream; relax the bound
-# only after verifying a fresh resolve of graph-algo builds against it.
-rayon = { version = ">=1.10.0, <1.11", optional = true }
+# `graph_builder` 0.4.x used to break on rayon 1.11 (`edges()` par-iter stopped
+# compiling); the bound below was load-bearing until the mnestic fork
+# (vkozio/graph@mnestic/wasm.1, graph 0.3.2 / graph_builder 0.4.2) outgrew the
+# breakage — verified against rayon 1.12/1.13. Keep the floor; raise the
+# ceiling only with a fresh graph-algo resolve in CI.
+rayon = { version = ">=1.10.0, <1.14", optional = true }
 minreq = { version = "2.11.2", features = ["https-rustls"], optional = true }
 tikv-jemallocator-global = { version = "0.5.0", optional = true }
 rocksdb = { version = "0.22.0", optional = true }
@@ -215,7 +216,7 @@ tokio = { version = "1.37.0", optional = true }
 sqlite = { version = "0.36.0", optional = true }
 sqlite3-src = { version = "0.6.1", optional = true }
 js-sys = { version = "0.3.60", optional = true }
-graph = { version = "0.3.1", optional = true }
+graph = { version = "0.3.2", optional = true }
 crossbeam = "0.8.4"
 ndarray = { version = "0.15.6", features = ["serde"] }
 sha2 = "0.10.8"

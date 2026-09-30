@@ -25,3 +25,14 @@ debug = true
 
 [profile.dev.package."mnestic-rocks"]
 opt-level = 3
+
+# Graph stack from the mnestic fork (vkozio/graph@mnestic/wasm.1, same
+# versions: graph 0.3.2 / graph_builder 0.4.2, MIT). The fork carries the
+# wasm fixes (no-op Timer, par_scope fallback, Csr::empty()) and outgrew the
+# rayon-1.11 `edges()` breakage that crates.io graph_builder 0.4.1 still
+# has — without this patch the stable build cannot use rayon >= 1.11.
+# Host code paths are bit-identical to upstream (fork suite: 122 green).
+# cozo-lib-wasm-next carries the same patch in its own manifest (own lock).
+[patch.crates-io]
+graph = { git = "https://github.com/vkozio/graph.git", tag = "mnestic/wasm.1" }
+graph_builder = { git = "https://github.com/vkozio/graph.git", tag = "mnestic/wasm.1" }
