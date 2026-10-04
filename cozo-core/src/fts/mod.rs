@@ -6,6 +6,32 @@
  * You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+/*
+ * Full-text search: engine-facing seam contract.
+ *
+ * Everything outside this module talks to FTS through exactly these names
+ * (all `pub(crate)` — nothing here is public API):
+ *
+ * * types: [`FtsIndexManifest`], [`TokenizerConfig`] (DDL + plan nodes);
+ * * write path (`runtime/relation.rs`): `indexing::{put_fts_index_item,
+ *   del_fts_index_item, encode_fts_rows_for_tuple}`;
+ * * read path (the `FtsSearch` plan node): `indexing::fts_search`, plus the
+ *   BM25 doc-stats (`scan/rebuild/seed_fts_doc_stats`, `FtsCache`);
+ * * syntax (`parse/fts.rs`): `ast::{FtsExpr, FtsLiteral, FtsNear, ...}`.
+ *
+ * A backend swap (custom postings <-> tantivy) reimplements these items and
+ * nothing else: no caller outside `fts/` names a tokenizer, a posting layout,
+ * or an index file, so no `trait` is needed — the module boundary IS the
+ * abstraction. Two constraints travel with the seam:
+ *
+ * * postings currently live IN the KV store, so every storage backend (mem,
+ *   sqlite, rocksdb, redb) gets FTS for free. A backend with its own files
+ *   (a tantivy `Directory`) must solve per-backend persistence instead —
+ *   sidecar dirs next to the DB file, like the old tantivy days.
+ * * the tokenizer stack (`tokenizer/`, `cangjie/`) is the wasm-relevant part:
+ *   whatever replaces it must still build for wasm32 without mmap/threads.
+ */
+
 use crate::data::memcmp::MemCmpEncoder;
 #[cfg(feature = "fts-cangjie")]
 use crate::fts::cangjie::tokenizer::CangJieTokenizer;

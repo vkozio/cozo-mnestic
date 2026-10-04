@@ -10,8 +10,9 @@ provenance and licensing.
 - Pure-Rust persistent `redb` storage backend, ported from
   `lawless-m/cozo-redb` and gated behind the optional `storage-redb` feature
   (redb 4.3.0): single-file ACID store, no C++ toolchain, with time travel.
-  Available directly as `Db<RedbStorage>` (`new_cozo_redb` /
-  `new_cozo_redb_mem`); `DbInstance` dispatch is not wired yet.
+  Available as `Db<RedbStorage>` (`new_cozo_redb` / `new_cozo_redb_mem`), and
+  through the `DbInstance` dispatcher as `-e redb` in `cozo-bin`. See
+  [the evaluation record](docs/research/cozo-redb-evaluation.md).
 - Native Rust governed multi-transactions: a serialized client and host-owned
   worker with an absolute deadline, bounded idle waiting, inherited statement
   memory limits, cooperative cancellation and per-query warning flushes. Every
