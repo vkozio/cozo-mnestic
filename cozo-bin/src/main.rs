@@ -13,7 +13,7 @@ use std::process::exit;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 
-use crate::repl::{repl_main, ReplArgs};
+use crate::repl::{exec_main, repl_main, ExecArgs, ReplArgs};
 use crate::server::{server_main, ServerArgs};
 
 mod client;
@@ -32,6 +32,8 @@ struct AppArgs {
 enum Commands {
     Server(ServerArgs),
     Repl(ReplArgs),
+    /// Run a single CozoScript non-interactively with JSON output and proper exit codes.
+    Exec(ExecArgs),
 }
 
 fn main() {
@@ -47,6 +49,15 @@ fn main() {
         Commands::Repl(args) => {
             if let Err(e) = repl_main(args) {
                 eprintln!("{e}");
+                exit(-1);
+            }
+        }
+        Commands::Exec(args) => {
+            // Script failures already printed their JSON to stderr inside
+            // exec_main and exited with a non-zero code; only infra errors
+            // (bad flags, unreadable file, cannot open the DB) reach here.
+            if let Err(e) = exec_main(args) {
+                eprintln!("{e:?}");
                 exit(-1);
             }
         }

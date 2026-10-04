@@ -44,6 +44,35 @@ io-uring = ["cozo/io-uring"]
 storage-sled = ["cozo/storage-sled"]
 ## Enables the [TiKV](https://tikv.org/) client backend
 storage-tikv = ["cozo/storage-tikv"]
+## Enables the [redb](https://github.com/cberner/redb) backend (pure-Rust embedded
+## B-tree, single file, ACID, time travel; no C++ toolchain, unlike RocksDB).
+storage-redb = ["cozo/storage-redb"]
+## Registers CsvReader and JsonReader (script-controlled file readers, trusted
+## callers only; with `requests` they can also fetch outbound URLs).
+data-import = ["cozo/data-import"]
+## RDF boundary I/O (Turtle/N-Triples/N-Quads/TriG) + IRI helpers; implies `data-import`.
+rdf-io = ["cozo/rdf-io"]
+## Read-only Cypher query surface over CozoScript.
+cypher = ["cozo/cypher"]
+## Cangjie tokenizer / IANA tz tables / Snowball stemmers / stopword lists.
+## These are cozo-core defaults, but this crate builds cozo with
+## default-features = false, so re-enable them here for the full build.
+fts-cangjie = ["cozo/fts-cangjie"]
+dt-tz = ["cozo/dt-tz"]
+fts-stemmer = ["cozo/fts-stemmer"]
+fts-stopwords = ["cozo/fts-stopwords"]
+## Everything for analytics: compact + redb + all readers + full FTS.
+max = [
+  "compact",
+  "storage-redb",
+  "data-import",
+  "rdf-io",
+  "cypher",
+  "fts-cangjie",
+  "dt-tz",
+  "fts-stemmer",
+  "fts-stopwords",
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

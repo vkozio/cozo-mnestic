@@ -41,6 +41,162 @@ You can use the following meta ops in the REPL:
 * `%backup <FILE>`: the current database will be backed up into the file.
 * `%restore <FILE>`: restore the data in the backup to the current database. The current database must be empty.
 
+## Non-interactive scripts (`exec`)
+
+`repl` is built for a human at a terminal: prompt, history file, banner. For scripts, agents
+and CI use `./cozo exec`, which runs one CozoScript, prints the result and exits with a status
+code.
+
+| mode   | use when                                            | output default |
+| ------ | --------------------------------------------------- | -------------- |
+| `exec` | one-shot script, machine-readable result, exit code | `json`         |
+| `repl` | interactive exploration, `%`-meta commands, pipes   | `table`        |
+
+`exec` and `repl` take the same connection flags:
+
+```
+-e, --engine <ENGINE>   mem | sqlite | redb | rocksdb | ...
+-p, --path <PATH>       DB file. Ignored for mem. Default: cozo.db
+-c, --config <CONFIG>   extra config as JSON. Default: {}
+```
+
+`exec` flags:
+
+```
+--cmd <CMD>         CozoScript inline. Exactly one of --cmd / --file is required.
+--file <FILE>       Run the whole file as a single CozoScript
+                    (same single-stored-op rule as --cmd).
+--format <FORMAT>   table | json  [default: json]
+--timeout <TIMEOUT> per-call query timeout in seconds, must be > 0
+```
+
+`repl` flags:
+
+```
+--format <FORMAT>               table | json (no default = table interactively)
+--quiet                         suppress banners; infos go to stderr
+--history-file <HISTORY_FILE>   explicit history path
+--no-history                    disable history (conflicts with --history-file)
+```
+
+A database file persists across calls, so multi-step flows are several `exec` invocations —
+see the one-op rule below.
+
+```bash
+./cozo exec -e redb -p data.redb --cmd ':create item {id: Int, name: String}'
+./cozo exec -e redb -p data.redb --cmd ':put item <- [{id: 1, name: "bolt"}, {id: 2, name: "nut"}]'
+./cozo exec -e redb -p data.redb --cmd '?[count(id)] := *item[id, _]'
+```
+
+```json
+{"headers":["count(id)"],"rows":[[2]],"next":null,"ok":true,"took":0.048}
+```
+
+The same query for a human (`--format table`):
+
+```
+ count(id)
+ -----------
+  2
+```
+
+System catalogs are plain scripts, so they work in `exec` (`%`-commands do not):
+
+```bash
+./cozo exec -e redb -p data.redb --cmd '::columns item'
+```
+
+```json
+{
+  "headers": ["column", "is_key", "index", "type", "has_default", "default_expr"],
+  "next": null,
+  "ok": true,
+  "rows": [
+    ["id", true, 0, "Int", false, null],
+    ["name", false, 1, "String", false, null]
+  ],
+  "took": 0.017
+}
+```
+
+`--file` runs a whole file as one script:
+
+```bash
+./cozo exec -e redb -p data.redb --file q.cozo
+```
+
+To drive the `%`-meta commands from a script, pipe lines into `repl`; one line is one command
+and `--format json` prints one JSON object per line. Always pass `--no-history` and `--quiet`
+in automation.
+
+```bash
+echo '%tables' | ./cozo repl -e redb -p data.redb --format json --no-history --quiet
+echo '%stats'  | ./cozo repl -e redb -p data.redb --format table --no-history --quiet
+```
+
+`%tables`, `%schema <rel>`, `%stats`, `%eval`, `%run`, `%graphs`, `%queries` and the
+parameter commands (`%set`, `%unset`, `%clear`, `%params`) are REPL-only; an unknown `%foo`
+falls through to `run_script`.
+
+### Output contract
+
+On success the payload goes to stdout and the exit code is 0:
+
+```json
+{"headers": ["<col>", "..."], "rows": [[...]], "next": null, "ok": true, "took": 0.1}
+```
+
+`took` is seconds (float) and varies per run; do not assert on it. `%schema` and `%stats` have
+their own shapes (`{"ok":true,"relation":"...","columns":{...},"indices":{...}}` and
+`{"ok":true,"tables":[...],"total_rows":N,"db_path":"...","db_file_bytes":N}`).
+
+On failure stdout stays empty, one JSON object (or miette text with `--format table`) goes to
+stderr:
+
+```json
+{
+  "causes": [],
+  "code": "query::relation_not_found",
+  "display": "...",
+  "filename": "",
+  "labels": [],
+  "message": "Cannot find requested stored relation 'nosuch'",
+  "ok": false,
+  "related": [],
+  "severity": "error"
+}
+```
+
+Error keys: `ok:false`, `code` (`parser::pest`, `query::relation_not_found`,
+`eval::no_implementation`, ...), `message`, `display` (ANSI-colored), `labels`, `causes`,
+`related`, `severity`, `filename`, and `help` for parser errors.
+
+### Exit codes
+
+| code    | meaning                                                                                |
+| ------- | -------------------------------------------------------------------------------------- |
+| 0       | success                                                                                |
+| 1       | script ran, query failed                                                                |
+| 2       | CLI usage error from clap                                                              |
+| -1 (255 on Unix shells) | infrastructure error: no `--cmd`/`--file`, `--timeout 0`, unreadable `--file`, unknown engine |
+
+### Limits and gotchas
+
+1. One stored op per call. Schema and data never share one `--cmd`/`--file`/`%run`: a script
+   with both `:create` and `:put` fails with `parser::pest`. Use one call per op.
+2. Aggregations only in head position. `?[sum(x)] := *rel[_, x, _]` works; `?[x] := x = sum(1)`
+   fails with `eval::no_implementation`.
+3. `count()` with no argument is a parser error, not an empty count. Use `count(id)` with a
+   bound variable.
+4. `exec` ignores stdin entirely; only `--cmd` / `--file` runs. `repl` reads stdin line by line.
+5. REPL history defaults to `<db-path>.history` next to the database file, never the working
+   directory; `mem` and `:memory:` get no history.
+6. Without a TTY, `repl` keeps the `table` default and warns on stderr. Pass `--format json`
+   explicitly in automation.
+7. `--timeout` is seconds (float) and must be `> 0`.
+8. `sum()` over ints returns a float in JSON (`2.0`) but prints as an int in tables (`2`).
+   Compare numerically, not textually.
+
 ## The query API
 
 Queries are run by sending HTTP POST requests to the server.
@@ -107,4 +263,12 @@ Building `cozo` requires a [Rust toolchain](https://rustup.rs). Run
 
 ```bash
 cargo build --release -p cozo-bin -F compact -F storage-rocksdb
+```
+
+`cozo-bin` builds the engine with `default-features = false`, so every engine feature it wants
+has to be named. The `max` preset is a shortcut for the widest build — redb, all readers, the
+Cypher surface and the full FTS stack:
+
+```bash
+cargo build --release -p cozo-bin -F max
 ```
