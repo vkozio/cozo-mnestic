@@ -49,6 +49,11 @@ $optExe = Join-Path $toolsBin "wasm-opt.exe"
 $pkgDir = Join-Path $crateDir "pkg"
 $libName = "cozo_lib_wasm_next"
 
+# REBUILD GUARANTEE: wasm-bindgen below writes ONLY to pkg/ (git-ignored scratch).
+# Hand-written JS lives in js/ (capabilities.mjs, cozo_next.mjs) + demo/ + tests/probe/
+# and is NEVER overwritten: bindgen regenerates pkg/*.js, pkg/*.d.ts,
+# pkg/*_bg.wasm, pkg/snippets/** and nothing else. Do NOT put sources in pkg/.
+
 # 0. Preconditions (read-only checks).
 $rustcVer = (rustc --version 2>&1 | Out-String)
 if ($rustcVer -notmatch "nightly") {
@@ -120,8 +125,8 @@ Write-Host "== patched worker bootstrap: $needle -> $fixed"
 #    i64.trunc_sat_f64_s (saturating float-to-int), and without the flag the
 #    validator fails with "all used features should be allowed".
 if (-not $SkipWasmOpt) {
-    Write-Host "== wasm-opt -Oz --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int"
-    & $optExe -Oz --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int $bgWasm -o $bgWasm
+    Write-Host "== wasm-opt --flatten --rereloop -Oz -Oz --low-memory-unused --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int"
+    & $optExe --flatten --rereloop -Oz -Oz --low-memory-unused --enable-threads --enable-bulk-memory --enable-simd --enable-mutable-globals --enable-nontrapping-float-to-int $bgWasm -o $bgWasm
     if ($LASTEXITCODE -ne 0) { throw "wasm-opt failed ($LASTEXITCODE)" }
     "Optimized wasm: {0:N0} bytes" -f (Get-Item $bgWasm).Length
 }
