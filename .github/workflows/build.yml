@@ -152,6 +152,10 @@ jobs:
   # `budgeted_leg_errors_loudly_without_graph_algo` test only exists (and can
   # only run) without `graph-algo` — the sole guard on the feature-seam loud
   # error (design §a0, 0.14.0).
+  # `fts-stemmer,fts-stopwords` are requested explicitly because the hybrid
+  # suites below index their corpus with `Stemmer`/`Stopwords('en')`, which are
+  # feature-gated tables. Everything else is still the bare `minimal` consumer:
+  # no `graph-algo`, no `rayon`, no other default FTS extra.
   minimal:
     name: test (minimal features, no graph-algo)
     runs-on: ubuntu-latest
@@ -160,7 +164,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test (hybrid suites under minimal)
-        run: cargo test -p mnestic --no-default-features --features minimal --test hybrid_graph_leg --test hybrid_helper --verbose
+        run: >
+          cargo test -p mnestic
+          --no-default-features
+          --features minimal,fts-stemmer,fts-stopwords
+          --test hybrid_graph_leg
+          --test hybrid_helper
+          --verbose
 
   clippy:
     name: clippy (blocking, -D warnings)

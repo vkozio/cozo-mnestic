@@ -132,6 +132,7 @@ mod raw_tokenizer;
 mod remove_long;
 mod simple_tokenizer;
 mod split_compound_words;
+#[cfg(feature = "fts-stemmer")]
 mod stemmer;
 mod stop_word_filter;
 mod tokenized_string;
@@ -146,6 +147,7 @@ pub(crate) use self::raw_tokenizer::RawTokenizer;
 pub(crate) use self::remove_long::RemoveLongFilter;
 pub(crate) use self::simple_tokenizer::SimpleTokenizer;
 pub(crate) use self::split_compound_words::SplitCompoundWords;
+#[cfg(feature = "fts-stemmer")]
 pub(crate) use self::stemmer::{Language, Stemmer};
 pub(crate) use self::stop_word_filter::StopWordFilter;
 // pub(crate) use self::tokenized_string::{PreTokenizedStream, PreTokenizedString};

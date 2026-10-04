@@ -25,7 +25,7 @@ name = "cozo"
 [features]
 #! # Features
 
-default = ["compact", "fts-cangjie", "dt-tz"]
+default = ["compact", "fts-cangjie", "dt-tz", "fts-stemmer", "fts-stopwords"]
 ## Enables the `minimal`, `requests` and `graph-algo` features.
 compact = ["minimal", "requests", "graph-algo"]
 ## Enables the `minimal`, `requests` and `graph-algo` features in single threaded mode.
@@ -88,6 +88,16 @@ wasm = ["uuid/js", "dep:js-sys"]
 ## with default-features = false (e.g. wasm builds that don't need Chinese
 ## support) to drop the jieba/cedarwood dependency subtree.
 fts-cangjie = ["dep:jieba-rs"]
+## Snowball stemmers (rust-stemmers) for the `Stemmer` token filter.
+## On by default; disable with default-features = false (e.g. wasm builds
+## using only Simple/Lowercase pipelines) to drop the stemmer code and tables.
+## Without it the `Stemmer` filter bails with a clear error.
+fts-stemmer = ["dep:rust-stemmers"]
+## Embedded stopword lists (stopwords-iso) for `Stopwords('lang')`.
+## On by default; disable with default-features = false to drop ~380 KB of
+## static word lists from the binary. `Stopwords([...explicit list...])`
+## keeps working without this feature; only the language-name lookup bails.
+fts-stopwords = []
 ## IANA timezone tables (chrono-tz) for datetime functions. On by default; disable
 ## with default-features = false (e.g. wasm builds that only compare epoch timestamps)
 ## to drop ~2 MB of static transition tables from the wasm data segment.
@@ -228,7 +238,7 @@ quadrature = "0.1.2"
 # stays off: the tokenizer uses Jieba::empty().
 jieba-rs = { version = "0.9", default-features = false, optional = true }
 aho-corasick = "1.1.3"
-rust-stemmers = "1.2.0"
+rust-stemmers = { version = "1.2.0", optional = true }
 fast2s = "0.3.1"
 swapvec = "0.3.0"
 

@@ -10,10 +10,12 @@ use crate::data::memcmp::MemCmpEncoder;
 #[cfg(feature = "fts-cangjie")]
 use crate::fts::cangjie::tokenizer::CangJieTokenizer;
 use crate::fts::tokenizer::{
-    AlphaNumOnlyFilter, AsciiFoldingFilter, BoxTokenFilter, Language, LowerCaser, NgramTokenizer,
-    RawTokenizer, RemoveLongFilter, SimpleTokenizer, SplitCompoundWords, Stemmer, StopWordFilter,
+    AlphaNumOnlyFilter, AsciiFoldingFilter, BoxTokenFilter, LowerCaser, NgramTokenizer,
+    RawTokenizer, RemoveLongFilter, SimpleTokenizer, SplitCompoundWords, StopWordFilter,
     TextAnalyzer, Tokenizer, WhitespaceTokenizer,
 };
+#[cfg(feature = "fts-stemmer")]
+use crate::fts::tokenizer::{Language, Stemmer};
 use crate::DataValue;
 #[cfg(feature = "fts-cangjie")]
 use jieba_rs::Jieba;
@@ -201,6 +203,7 @@ impl TokenizerConfig {
                     .map_err(|e| miette!("Failed to load dictionary: {}", e))?
                     .into()
             }
+            #[cfg(feature = "fts-stemmer")]
             "Stemmer" => {
                 let language = match self
                     .args
@@ -235,6 +238,10 @@ impl TokenizerConfig {
                 };
                 Stemmer::new(language).into()
             }
+            #[cfg(not(feature = "fts-stemmer"))]
+            "Stemmer" => bail!(
+                "Stemmer filter is disabled: rebuild with the `fts-stemmer` feature"
+            ),
             "Stopwords" => {
                 match self.args.first().ok_or_else(|| {
                     miette!("Filter Stopwords requires language name or a list of stopwords")

@@ -11,6 +11,7 @@
 //! assert!(stream.next().is_none());
 //! ```
 #[rustfmt::skip]
+#[cfg(feature = "fts-stopwords")]
 mod stopwords;
 
 use std::sync::Arc;
@@ -30,6 +31,7 @@ impl StopWordFilter {
     /// Creates a new [`StopWordFilter`] for the given [`Language`]
     ///
     /// Returns `Some` if a list of stop words is available and `None` otherwise.
+    #[cfg(feature = "fts-stopwords")]
     pub(crate) fn for_lang(language: &str) -> Result<Self> {
         let words = match language {
             "af" => stopwords::AF,
@@ -94,6 +96,13 @@ impl StopWordFilter {
         };
 
         Ok(Self::new(words.iter().map(|&word| word.to_owned())))
+    }
+
+    /// Stub when `fts-stopwords` is off: explicit lists via [`StopWordFilter::new`]
+    /// keep working, only the embedded language-name lookup bails.
+    #[cfg(not(feature = "fts-stopwords"))]
+    pub(crate) fn for_lang(_language: &str) -> Result<Self> {
+        bail!("Stopwords for language is disabled: rebuild with the `fts-stopwords` feature")
     }
 
     /// Creates a `StopWordFilter` given a list of words to remove
