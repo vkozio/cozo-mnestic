@@ -160,8 +160,7 @@ pub(crate) mod utils;
 /// but are not desirable if you are using Rust.
 ///
 /// NOTE for backend contributors: adding a variant requires updating every
-/// dispatch site on this enum (~30 matches). `storage-redb` (`RedbStorage`)
-/// is intentionally not wired here yet — use `Db<RedbStorage>` directly.
+/// dispatch site on this enum (~30 matches).
 #[derive(Clone)]
 pub enum DbInstance {
     /// In memory storage (not persistent)
@@ -181,6 +180,9 @@ pub enum DbInstance {
     #[cfg(feature = "storage-tikv")]
     /// TiKV storage (experimental)
     TiKv(Db<TiKvStorage>),
+    #[cfg(feature = "storage-redb")]
+    /// redb storage (pure-Rust embedded)
+    Redb(Db<RedbStorage>),
 }
 
 impl Default for DbInstance {
@@ -266,6 +268,8 @@ impl DbInstance {
                 let opts: TiKvOpts = serde_json::from_str(options).into_diagnostic()?;
                 Self::TiKv(new_cozo_tikv(opts.end_points.clone(), opts.optimistic)?)
             }
+            #[cfg(feature = "storage-redb")]
+            "redb" => Self::Redb(new_cozo_redb(path)?),
             k => bail!(
                 "database engine '{}' not supported (maybe not compiled in)",
                 k
@@ -306,6 +310,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.set_durable_writes(durable),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.set_durable_writes(durable),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.set_durable_writes(durable),
         }
     }
 
@@ -323,6 +329,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.get_fixed_rules(),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.get_fixed_rules(),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.get_fixed_rules(),
         }
     }
     /// Snapshot of the registered custom aggregates (mnestic fork, R0b).
@@ -339,6 +347,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.get_custom_aggrs(),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.get_custom_aggrs(),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.get_custom_aggrs(),
         }
     }
 
@@ -356,6 +366,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.get_custom_bounded_meets(),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.get_custom_bounded_meets(),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.get_custom_bounded_meets(),
         }
     }
     /// Dispatcher method. See [crate::Db::run_script].
@@ -404,6 +416,10 @@ impl DbInstance {
             DbInstance::TiKv(db) => {
                 db.run_script_with_options(payload, params, mutability, options)
             }
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => {
+                db.run_script_with_options(payload, params, mutability, options)
+            }
         }
     }
     /// Enable or disable the automatic factorized-count rewrite (mnestic fork,
@@ -422,6 +438,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.set_query_factorization(enabled),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.set_query_factorization(enabled),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.set_query_factorization(enabled),
         }
     }
 
@@ -440,6 +458,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.query_factorization(),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.query_factorization(),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.query_factorization(),
         }
     }
 
@@ -459,6 +479,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.set_default_query_timeout(secs),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.set_default_query_timeout(secs),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.set_default_query_timeout(secs),
         }
     }
 
@@ -479,6 +501,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.set_default_query_mem_limit(bytes),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.set_default_query_mem_limit(bytes),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.set_default_query_mem_limit(bytes),
         }
     }
     /// Test-only dispatcher. See [`crate::Db::fail_next_commit_for_tests`].
@@ -497,6 +521,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.fail_next_commit_for_tests(),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.fail_next_commit_for_tests(),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.fail_next_commit_for_tests(),
         }
     }
 
@@ -515,6 +541,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.default_query_timeout(),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.default_query_timeout(),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.default_query_timeout(),
         }
     }
     /// One-call hybrid retrieval (mnestic fork addition): runs an HNSW + FTS
@@ -590,6 +618,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.run_script_ast(payload, cur_vld, mutability),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.run_script_ast(payload, cur_vld, mutability),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.run_script_ast(payload, cur_vld, mutability),
         }
     }
     /// Run the CozoScript passed in. The `params` argument is a map of parameters.
@@ -693,6 +723,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.export_relations(relations),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.export_relations(relations),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.export_relations(relations),
         }
     }
     /// Dispatcher method. See [crate::Db::export_relation_as_rdf].
@@ -715,6 +747,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.export_relation_as_rdf(relation, format, prefixes),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.export_relation_as_rdf(relation, format, prefixes),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.export_relation_as_rdf(relation, format, prefixes),
         }
     }
     /// Export relations to JSON-encoded string.
@@ -757,6 +791,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.import_relations(data),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.import_relations(data),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.import_relations(data),
         }
     }
     /// Atomically import a Parquet or Arrow IPC file into an existing relation.
@@ -780,6 +816,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.import_columnar_file(relation, path, options),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.import_columnar_file(relation, path, options),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.import_columnar_file(relation, path, options),
         }
     }
     /// Import a relation, the data is given as a JSON string, and the returned result is converted into a string.
@@ -823,6 +861,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.backup_db(out_file),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.backup_db(out_file),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.backup_db(out_file),
         }
     }
     /// Backup the running database into an Sqlite file, with JSON string return value.
@@ -847,6 +887,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.restore_backup(in_file),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.restore_backup(in_file),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.restore_backup(in_file),
         }
     }
     /// Restore from an Sqlite backup, with JSON string return value.
@@ -875,6 +917,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.import_from_backup(in_file, relations),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.import_from_backup(in_file, relations),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.import_from_backup(in_file, relations),
         }
     }
     /// Import relations from an Sqlite backup, with JSON string return value.
@@ -915,6 +959,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.register_callback(relation, capacity),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.register_callback(relation, capacity),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.register_callback(relation, capacity),
         }
     }
 
@@ -933,6 +979,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.unregister_callback(id),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.unregister_callback(id),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.unregister_callback(id),
         }
     }
     /// Dispatcher method. See [crate::Db::register_fixed_rule].
@@ -952,6 +1000,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.register_fixed_rule(name, rule_impl),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.register_fixed_rule(name, rule_impl),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.register_fixed_rule(name, rule_impl),
         }
     }
     /// Dispatcher method. See [crate::Db::register_custom_aggr].
@@ -971,6 +1021,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.register_custom_aggr(name, is_meet, factory),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.register_custom_aggr(name, is_meet, factory),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.register_custom_aggr(name, is_meet, factory),
         }
     }
     /// Dispatcher method. See [crate::Db::register_bounded_meet_aggr].
@@ -999,6 +1051,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.register_bounded_meet_aggr(name, dominates, max_survivors),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.register_bounded_meet_aggr(name, dominates, max_survivors),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.register_bounded_meet_aggr(name, dominates, max_survivors),
         }
     }
     /// Dispatcher method. See [crate::Db::unregister_bounded_meet_aggr].
@@ -1015,6 +1069,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.unregister_bounded_meet_aggr(name),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.unregister_bounded_meet_aggr(name),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.unregister_bounded_meet_aggr(name),
         }
     }
     /// Dispatcher method. See [crate::Db::unregister_custom_aggr].
@@ -1031,6 +1087,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.unregister_custom_aggr(name),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.unregister_custom_aggr(name),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.unregister_custom_aggr(name),
         }
     }
     /// Dispatcher method. See [crate::Db::unregister_fixed_rule]
@@ -1047,6 +1105,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.unregister_fixed_rule(name),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.unregister_fixed_rule(name),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.unregister_fixed_rule(name),
         }
     }
 
@@ -1069,6 +1129,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.run_multi_transaction(write, payloads, results),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.run_multi_transaction(write, payloads, results),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.run_multi_transaction(write, payloads, results),
         }
     }
     /// Prepare a governed client and host-owned worker. The worker must be run
@@ -1093,6 +1155,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.governed_limits(options),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.governed_limits(options),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.governed_limits(options),
         };
         GovernedTransactionWorker::pair(self.clone(), write, options)
     }
@@ -1138,6 +1202,8 @@ impl DbInstance {
             DbInstance::Sled(db) => db.set_graph_projection_capacity(bytes),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.set_graph_projection_capacity(bytes),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.set_graph_projection_capacity(bytes),
         }
     }
 }

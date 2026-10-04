@@ -217,6 +217,8 @@ impl GovernedTransactionWorker {
             DbInstance::Sled(db) => db.run_governed_transaction(&self),
             #[cfg(feature = "storage-tikv")]
             DbInstance::TiKv(db) => db.run_governed_transaction(&self),
+            #[cfg(feature = "storage-redb")]
+            DbInstance::Redb(db) => db.run_governed_transaction(&self),
         };
         if let Err(error) = result {
             *self.terminal.lock().unwrap() = Some(error);
