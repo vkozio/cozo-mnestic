@@ -2801,13 +2801,13 @@ fn dt_tz(args: &[DataValue], tz_pos: usize, fn_name: &str) -> Result<TzSpec> {
             }
             #[cfg(feature = "dt-tz")]
             {
-                return chrono_tz::Tz::from_str(s)
+                chrono_tz::Tz::from_str(s)
                     .map(TzSpec::Iana)
-                    .map_err(|_| miette!("bad timezone specification: {}", s));
+                    .map_err(|_| miette!("bad timezone specification: {}", s))
             }
             #[cfg(not(feature = "dt-tz"))]
             {
-                return Err(tz_error(s));
+                Err(tz_error(s))
             }
         }
     }
