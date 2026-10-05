@@ -116,6 +116,61 @@ fn merge_spans(symbs: &[Symbol]) -> SourceSpan {
     fst
 }
 
+/// Every trailing query option, with a one-line description each.
+///
+/// The keywords live in the `option` rule of `cozoscript.pest` and nowhere else,
+/// so this table duplicates them and is pinned to the grammar by
+/// `query_option_names_match_grammar` in `crate::parse::tests`. Two consumers need
+/// that list where the grammar is not available: the `::builtins options`
+/// introspection sysop, and the parse diagnostic that has to explain that `::` is
+/// not a pipeline prefix (it currently "expects" all of these while rejecting the
+/// token the user actually wrote).
+pub(crate) static QUERY_OPTIONS: &[(&str, &str)] = &[
+    (":limit", "cap the number of result rows"),
+    (":offset", "skip the first N result rows"),
+    (
+        ":sort",
+        "order results by an output column; prefix the column with `-` for descending",
+    ),
+    (":order", "synonym of `:sort`"),
+    (
+        ":reorder",
+        "join reorder mode: `greedy` (default) or `written` to opt out",
+    ),
+    (":timeout", "abort the query after N seconds"),
+    (
+        ":mem_limit",
+        "abort if materialization exceeds N estimated bytes",
+    ),
+    (":as_of", "read at a given validity timestamp"),
+    (":sleep", "sleep N seconds before running the body"),
+    (":returning", "return the tuples written by the body"),
+    (
+        ":assert",
+        "`none` asserts the body wrote nothing, `some` that it wrote something",
+    ),
+    (
+        ":disable_magic_rewrite",
+        "switch off Datalog subquery rewriting for this script",
+    ),
+    (
+        ":create",
+        "create the named relation, replacing an existing one",
+    ),
+    (":replace", "replace the contents of the named relation"),
+    (
+        ":reconcile",
+        "recompute-based belief revision of the named relation",
+    ),
+    (":insert", "insert rows, failing on an existing key"),
+    (":put", "insert or replace rows (idempotent upsert)"),
+    (":update", "update existing rows"),
+    (":rm", "delete the listed keys"),
+    (":delete", "delete the listed tuples"),
+    (":ensure", "create the relation only if it does not exist"),
+    (":ensure_not", "fail if the relation exists"),
+];
+
 pub(crate) fn parse_query(
     src: Pairs<'_>,
     param_pool: &BTreeMap<String, DataValue>,

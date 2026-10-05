@@ -30,6 +30,17 @@ from pathlib import Path
 # scripts/ lives at <repo>/scripts/, so the repo root is the parent of parent.
 ROOT = Path(__file__).resolve().parent.parent
 
+# ── output encoding ──────────────────────────────────────────────────────────
+# The status glyphs below (✓/✗/─) sit outside cp1252, which is still the default
+# stdout encoding on a Windows console: printing one raises UnicodeEncodeError and
+# the gate dies before its first check, so a version regression reads as "the
+# script crashed". Pin stdout to UTF-8 and degrade an unrepresentable glyph
+# rather than aborting the run.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass  # non-reconfigurable stream (e.g. captured); the glyph fallback below covers it
+
 # ── ANSI (suppressed when not a tty) ──────────────────────────────────────────
 _tty = sys.stdout.isatty()
 def _c(code: str, s: str) -> str: return f"\033[{code}m{s}\033[0m" if _tty else s
@@ -38,6 +49,18 @@ def bold(s): return _c("1", s)
 def green(s): return _c("32", s)
 def red(s): return _c("31", s)
 
+def _glyph(preferred: str, fallback: str) -> str:
+    """`preferred` if the output encoding can carry it, else an ASCII stand-in."""
+    enc = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        preferred.encode(enc)
+    except (UnicodeEncodeError, LookupError):
+        return fallback
+    return preferred
+
+MARK_OK = _glyph("✓", "OK")
+MARK_NO = _glyph("✗", "FAIL")
+
 _fails: list[str] = []
 _oks = 0
 
@@ -45,10 +68,10 @@ def check(ok: bool, label: str, detail: str = "") -> None:
     global _oks
     if ok:
         _oks += 1
-        print(f"  {green('✓')} {label}" + (dim(f"  {detail}") if detail else ""))
+        print(f"  {green(MARK_OK)} {label}" + (dim(f"  {detail}") if detail else ""))
     else:
         _fails.append(label)
-        print(f"  {red('✗')} {label}" + (f"  {red(detail)}" if detail else ""))
+        print(f"  {red(MARK_NO)} {label}" + (f"  {red(detail)}" if detail else ""))
 
 
 # ── parsing helpers (mirrors release-tools/check_ecosystem.py) ─────────────────

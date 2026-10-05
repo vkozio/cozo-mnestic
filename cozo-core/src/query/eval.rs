@@ -62,6 +62,11 @@ impl QueryLimiter {
         }
     }
     pub(crate) fn should_skip_next(&self) -> bool {
+        // :limit 0 takes nothing: every tuple is skipped so early_returned_iter
+        // is empty instead of leaking the one row put before incr_and_should_stop.
+        if self.total == Some(0) {
+            return true;
+        }
         match self.skip {
             None => false,
             Some(i) => i > self.counter.load(Ordering::Relaxed),

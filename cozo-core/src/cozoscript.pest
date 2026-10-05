@@ -13,10 +13,10 @@ query_script_inner_no_bracket = { (option | rule | const_rule | fixed_rule)+ }
 imperative_script = {SOI ~ imperative_stmt+ ~ EOI}
 sys_script = {SOI ~ "::" ~ (history_op | history_gc_op | evict_op | list_relations_op | list_columns_op | list_indices_op | describe_relation_op | repair_corrupt_op | reindex_op | remove_relations_op | trigger_relation_op |
                     trigger_relation_show_op | rename_relations_op | running_op | kill_op | explain_op |
-                    access_level_op | index_op | vec_idx_op | fts_idx_op | lsh_idx_op | compact_op | warnings_op | list_fixed_rules | graph_op | query_op) ~ EOI}
+                    access_level_op | index_op | vec_idx_op | fts_idx_op | lsh_idx_op | compact_op | warnings_op | list_fixed_rules | graph_op | query_op | builtins_op | version_op) ~ EOI}
 sys_script_inner = {"{" ~ "::" ~ (history_op | history_gc_op | evict_op | list_relations_op | list_columns_op | list_indices_op | describe_relation_op | repair_corrupt_op | reindex_op | remove_relations_op | trigger_relation_op |
                     trigger_relation_show_op | rename_relations_op | running_op | kill_op | explain_op |
-                    access_level_op | index_op | vec_idx_op | fts_idx_op | lsh_idx_op | compact_op | warnings_op | list_fixed_rules | graph_op | query_op) ~ "}"}
+                    access_level_op | index_op | vec_idx_op | fts_idx_op | lsh_idx_op | compact_op | warnings_op | list_fixed_rules | graph_op | query_op | builtins_op | version_op) ~ "}"}
 index_op = {"index" ~ (index_create | index_drop)}
 vec_idx_op = {"hnsw" ~ (index_create_adv | index_drop)}
 fts_idx_op = {"fts" ~ (index_create_adv | index_drop)}
@@ -39,6 +39,14 @@ index_drop = {"drop" ~ compound_ident ~ ":" ~ ident }
 compact_op = {"compact"}
 warnings_op = {"warnings" ~ warnings_clear?}
 warnings_clear = {"clear"}
+// mnestic fork, language introspection. The argument is optional so the bare
+// `::builtins` is the same rule as `::builtins all` — one unconditional call
+// has to be enough to discover the whole surface. An unknown argument is a
+// parse error (the `?` simply fails to match and `EOI` then rejects it), never
+// a silently empty result.
+builtins_op = {"builtins" ~ builtins_kind?}
+builtins_kind = {"options" | "ops" | "aggrs" | "all"}
+version_op = {"version"}
 history_op = {"history" ~ compound_ident ~ expr ~ (pos_int ~ pos_int?)?}
 history_gc_op = {"history_gc" ~ compound_ident ~ expr}
 evict_op = {"evict" ~ compound_ident ~ expr ~ evict_unredacted?}
@@ -221,8 +229,20 @@ string = _{(raw_string | s_quoted_string | quoted_string)}
 // these keyword literals do not greedily match a prefix of a longer identifier
 // (e.g. `nullable_column`, `trueValue`) where `term` tries `literal` before
 // `var` — upstream cozo #281.
-boolean = { ("true" | "false") ~ !("_" | XID_CONTINUE) }
-null = { "null" ~ !("_" | XID_CONTINUE) }
+//
+// `@` is load-bearing, not decoration. Every other literal in this grammar is
+// atomic (`pos_int`, `dot_float`, `ident`, …) and these two cannot be an
+// exception: in a *non-atomic* pest rule the implicit `WHITESPACE`/`COMMENT`
+// insertion extends the pair's span past the token, so `pair.as_str()` returns
+// `"true "` instead of `"true"` whenever the literal is not the last thing in
+// the input. `parse/expr.rs` derives the `Bool` from that raw text
+// (`DataValue::from(pair.as_str() == "true")`), so `a in [1,2,3], true :limit
+// 2` parsed `true` as `false` and the rule filtered every row away — silently,
+// with `ok:true`. Making the rule atomic keeps the word-boundary guard and
+// pins `as_str()` to exactly the token. (`null` never read its own text, but
+// had the same inflated span, which leaked into `SourceSpan` diagnostics.)
+boolean = @{ ("true" | "false") ~ !("_" | XID_CONTINUE) }
+null = @{ "null" ~ !("_" | XID_CONTINUE) }
 // Numbers
 pos_int = @{ASCII_DIGIT ~ ("_" | ASCII_DIGIT)*}
 hex_pos_int = @{"0x" ~ ASCII_HEX_DIGIT ~ ("_" | ASCII_HEX_DIGIT)*}

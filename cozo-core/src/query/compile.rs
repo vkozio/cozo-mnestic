@@ -133,7 +133,10 @@ struct RuleNotFound(String, #[label] SourceSpan);
 #[derive(Debug, Error, Diagnostic)]
 #[error("Arity mismatch for rule application {0}")]
 #[diagnostic(code(eval::rule_arity_mismatch))]
-#[diagnostic(help("Required arity: {1}, number of arguments given: {2}"))]
+#[diagnostic(help(
+    "Required arity: {1}, number of arguments given: {2}. Every column must be \
+     listed; write `_` in the positions you do not need, e.g. `*{0}[id, _, _, _]`"
+))]
 struct ArityMismatch(String, usize, usize, #[label] SourceSpan);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -692,7 +695,8 @@ impl<'a> SessionTx<'a> {
         #[error("Symbol '{0}' in rule head is unbound")]
         #[diagnostic(code(eval::unbound_symb_in_head))]
         #[diagnostic(help(
-            "Note that symbols occurring only in negated positions are not considered bound"
+            "Note that symbols occurring only in negated positions are not considered bound; \
+             a `_` in the body binds nothing, so name every column you need in the rule head"
         ))]
         struct UnboundSymbolInRuleHead(String, #[label] SourceSpan);
 

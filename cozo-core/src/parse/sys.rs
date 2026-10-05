@@ -39,6 +39,12 @@ pub enum SysOp {
     ListRelations,
     ListRunning,
     ListFixedRules,
+    /// mnestic fork, language introspection: enumerate the script-facing
+    /// surface. `None` is the bare `::builtins` form and means "everything".
+    ListBuiltins(Option<BuiltinKind>),
+    /// mnestic fork, language introspection: one row carrying
+    /// [`crate::ENGINE_VERSION`].
+    EngineVersion,
     KillRunning(u64),
     Explain(Box<InputProgram>),
     RemoveRelation(Vec<Symbol>),
@@ -103,6 +109,256 @@ pub(crate) struct StoredQueryParam {
     pub(crate) name: String,
     pub(crate) typing: Option<NullableColType>,
     pub(crate) default: Option<DataValue>,
+}
+
+/// Which slice of the enumerable language surface `::builtins` reports
+/// (mnestic fork).
+///
+/// The bare `::builtins` is deliberately NOT a fifth variant: it arrives as
+/// `Option::None` on [`SysOp::ListBuiltins`] and resolves to
+/// [`BuiltinKind::All`], so one unconditional call discovers everything. A
+/// design where "no argument" is a variant invites a future arm to forget it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BuiltinKind {
+    Ops,
+    Options,
+    Aggrs,
+    All,
+}
+
+impl BuiltinKind {
+    /// The value this slice carries in the `kind` column of `::builtins all`.
+    /// `All` has no such value — it is the union, never a row's own kind.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            BuiltinKind::Ops => "ops",
+            BuiltinKind::Options => "options",
+            BuiltinKind::Aggrs => "aggrs",
+            BuiltinKind::All => "all",
+        }
+    }
+}
+
+/// Every aggregate name `crate::data::aggr::parse_aggr` accepts, with the two
+/// flags that decide how one is evaluated: `is_meet` (its ⊕ is an absorptive
+/// semilattice, so it is admissible in a recursive rule) and
+/// `is_bounded_meet` (the store keeps a per-group *set* instead of one value).
+///
+/// Aggregate resolution is a `match` on the name string, structurally the same
+/// as `get_op`, and Wave 0 deliberately left that hot path alone — so this
+/// duplicates the keys rather than replacing them, and
+/// `builtin_aggr_inventory_matches_parse_aggr` (below) re-resolves every row
+/// through `parse_aggr` to pin them together. It lives in this file rather
+/// than beside `parse_aggr` only because this is the one crate module the
+/// drift test can reach the `pub(crate) parse_aggr` from.
+///
+/// It is exactly `parse_aggr`'s arm list, NOT every `define_aggr!` constant:
+/// `AGGR_INT_SUM_PROD` is deliberately unreachable from any script.
+pub(crate) const BUILTIN_AGGR_NAMES: &[(&str, bool, bool)] = &[
+    ("and", true, false),
+    ("or", true, false),
+    ("union", true, false),
+    ("intersection", true, false),
+    ("min", true, false),
+    ("max", true, false),
+    ("choice", true, false),
+    ("bit_and", true, false),
+    ("bit_or", true, false),
+    ("min_cost", true, false),
+    ("shortest", true, false),
+    ("unique", false, false),
+    ("group_count", false, false),
+    ("count", false, false),
+    ("count_unique", false, false),
+    ("variance", false, false),
+    ("std_dev", false, false),
+    ("sum", false, false),
+    ("product", false, false),
+    ("mean", false, false),
+    ("collect", false, false),
+    ("interval_coalesce", false, false),
+    ("choice_rand", false, false),
+    ("latest_by", false, false),
+    ("smallest_by", false, false),
+    ("bit_xor", false, false),
+    ("min_cost_k", false, true),
+    ("pareto_min", false, true),
+    ("pareto_max", false, true),
+];
+
+/// The `::builtins aggrs` rows: the inventory above plus every aggregate this
+/// `Db` has registered, sorted by name.
+///
+/// Both registries are in-memory `Db`-scoped state and `register_custom_aggr`
+/// rejects any name `parse_aggr` accepts, so the two sets are disjoint by
+/// construction and need no dedup here. Sorted rather than kept in inventory
+/// order because these are a set with no inherent sequence, unlike `options`
+/// (grammar order) and `ops` (grouping order).
+fn builtin_aggr_rows(
+    custom_aggrs: &BTreeMap<String, crate::data::aggr::RegisteredAggr>,
+    custom_bounded: &BTreeMap<String, crate::data::aggr::RegisteredBoundedMeet>,
+) -> Vec<(String, bool, bool, bool)> {
+    let mut rows: Vec<(String, bool, bool, bool)> = BUILTIN_AGGR_NAMES
+        .iter()
+        .map(|(name, is_meet, is_bounded_meet)| {
+            ((*name).to_string(), *is_meet, *is_bounded_meet, false)
+        })
+        .collect();
+    for (name, aggr) in custom_aggrs {
+        rows.push((name.clone(), aggr.is_meet, false, true));
+    }
+    for name in custom_bounded.keys() {
+        rows.push((name.clone(), false, true, true));
+    }
+    rows.sort_by(|l, r| l.0.cmp(&r.0));
+    rows
+}
+
+/// Build the `::builtins` result as `(column names, rows)`.
+///
+/// Each slice has its own shape — arity metadata is meaningless for an option
+/// keyword — so `::builtins all` widens to the union of all three and tags
+/// every row with a `kind` column. Cells that do not apply to a row's kind are
+/// `null` rather than a placeholder string, so `is null` is a usable filter
+/// instead of a string comparison against "".
+pub(crate) fn builtins_table(
+    kind: BuiltinKind,
+    custom_aggrs: &BTreeMap<String, crate::data::aggr::RegisteredAggr>,
+    custom_bounded: &BTreeMap<String, crate::data::aggr::RegisteredBoundedMeet>,
+) -> (Vec<String>, Vec<Vec<DataValue>>) {
+    let column = |names: &[&str]| names.iter().map(|n| (*n).to_string()).collect_vec();
+
+    match kind {
+        BuiltinKind::Ops => (
+            column(&["name", "min_arity", "vararg"]),
+            crate::data::expr::all_ops()
+                .into_iter()
+                .map(|op| {
+                    vec![
+                        DataValue::from(op.name),
+                        DataValue::from(op.min_arity as i64),
+                        DataValue::from(op.vararg),
+                    ]
+                })
+                .collect_vec(),
+        ),
+        BuiltinKind::Options => (
+            column(&["name", "description"]),
+            crate::parse::query::QUERY_OPTIONS
+                .iter()
+                .map(|(name, description)| {
+                    vec![DataValue::from(*name), DataValue::from(*description)]
+                })
+                .collect_vec(),
+        ),
+        BuiltinKind::Aggrs => (
+            column(&["name", "is_meet", "is_bounded_meet", "custom"]),
+            builtin_aggr_rows(custom_aggrs, custom_bounded)
+                .into_iter()
+                .map(|(name, is_meet, is_bounded_meet, custom)| {
+                    vec![
+                        DataValue::from(name),
+                        DataValue::from(is_meet),
+                        DataValue::from(is_bounded_meet),
+                        DataValue::from(custom),
+                    ]
+                })
+                .collect_vec(),
+        ),
+        BuiltinKind::All => {
+            let null = DataValue::Null;
+            let mut rows = Vec::new();
+            for op in crate::data::expr::all_ops() {
+                rows.push(vec![
+                    DataValue::from(BuiltinKind::Ops.as_str()),
+                    DataValue::from(op.name),
+                    DataValue::from(op.min_arity as i64),
+                    DataValue::from(op.vararg),
+                    null.clone(),
+                    null.clone(),
+                    null.clone(),
+                    null.clone(),
+                ]);
+            }
+            for (name, description) in crate::parse::query::QUERY_OPTIONS {
+                rows.push(vec![
+                    DataValue::from(BuiltinKind::Options.as_str()),
+                    DataValue::from(*name),
+                    null.clone(),
+                    null.clone(),
+                    DataValue::from(*description),
+                    null.clone(),
+                    null.clone(),
+                    null.clone(),
+                ]);
+            }
+            for (name, is_meet, is_bounded_meet, custom) in
+                builtin_aggr_rows(custom_aggrs, custom_bounded)
+            {
+                rows.push(vec![
+                    DataValue::from(BuiltinKind::Aggrs.as_str()),
+                    DataValue::from(name),
+                    null.clone(),
+                    null.clone(),
+                    null.clone(),
+                    DataValue::from(is_meet),
+                    DataValue::from(is_bounded_meet),
+                    DataValue::from(custom),
+                ]);
+            }
+            (
+                column(&[
+                    "kind",
+                    "name",
+                    "min_arity",
+                    "vararg",
+                    "description",
+                    "is_meet",
+                    "is_bounded_meet",
+                    "custom",
+                ]),
+                rows,
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BUILTIN_AGGR_NAMES;
+    use crate::data::aggr::parse_aggr;
+
+    /// `BUILTIN_AGGR_NAMES` duplicates the keys of `parse_aggr`'s match, and
+    /// that match — not the table — is what resolves an aggregate. Re-resolve
+    /// every row through it and compare the flags, so what `::builtins aggrs`
+    /// reports cannot disagree with what the engine does.
+    ///
+    /// The direction this CANNOT catch is an arm ADDED to `parse_aggr` with no
+    /// row here. Enumerating a `match`'s keys from outside means rewriting it
+    /// into a table, which is the refactor Wave 0 declined for `get_op`; the
+    /// count assertion below is the compromise, turning "a new aggregate is
+    /// invisible to `::builtins`" into a failing test.
+    #[test]
+    fn builtin_aggr_inventory_matches_parse_aggr() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (name, is_meet, is_bounded_meet) in BUILTIN_AGGR_NAMES {
+            assert!(seen.insert(*name), "BUILTIN_AGGR_NAMES repeats {name:?}");
+            let aggr =
+                parse_aggr(name).unwrap_or_else(|| panic!("parse_aggr no longer accepts {name:?}"));
+            assert_eq!(
+                (aggr.is_meet, aggr.is_bounded_meet),
+                (*is_meet, *is_bounded_meet),
+                "{name:?} flags in BUILTIN_AGGR_NAMES disagree with parse_aggr"
+            );
+        }
+        assert_eq!(
+            seen.len(),
+            29,
+            "parse_aggr gained or lost an arm: add/remove the matching \
+             BUILTIN_AGGR_NAMES row, and check whether it is script-facing \
+             (every arm is — an internal aggregate must stay out of parse_aggr)"
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -900,6 +1156,24 @@ pub(crate) fn parse_sys(
             }
         }
         Rule::list_fixed_rules => SysOp::ListFixedRules,
+        // mnestic fork, language introspection. The argument is optional in the
+        // grammar, so the bare `::builtins` reaches this arm with no inner
+        // pair at all — the same two-step shape as `graph_op` / `query_op`
+        // (`into_inner()`, then a match on the sub-rule).
+        Rule::builtins_op => {
+            let kind = inner
+                .into_inner()
+                .next()
+                .map(|kind_p| match kind_p.as_str() {
+                    "ops" => BuiltinKind::Ops,
+                    "options" => BuiltinKind::Options,
+                    "aggrs" => BuiltinKind::Aggrs,
+                    "all" => BuiltinKind::All,
+                    other => unreachable!("{other}"),
+                });
+            SysOp::ListBuiltins(kind)
+        }
+        Rule::version_op => SysOp::EngineVersion,
         r => unreachable!("{:?}", r),
     })
 }

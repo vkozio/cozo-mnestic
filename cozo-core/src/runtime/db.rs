@@ -2707,6 +2707,27 @@ impl<'s, S: Storage<'s>> Db<S> {
                         .collect_vec(),
                 ))
             }
+            // mnestic fork, language introspection. Both arms are pure
+            // in-memory lookups — no relation locks, so they are trivially
+            // correct under `skip_locking` and need no `read_only` guard. They
+            // DO take the two custom-aggregate read locks, which is why they
+            // clone the registries rather than borrowing `self` mid-match.
+            SysOp::ListBuiltins(kind) => {
+                let custom_aggrs = self.get_custom_aggrs();
+                let custom_bounded = self.get_custom_bounded_meets();
+                let (headers, rows) = crate::parse::sys::builtins_table(
+                    // The bare `::builtins` is `None` here; `All` is what the
+                    // grammar left out, so one call still discovers everything.
+                    kind.unwrap_or(crate::parse::sys::BuiltinKind::All),
+                    &custom_aggrs,
+                    &custom_bounded,
+                );
+                Ok(NamedRows::new(headers, rows))
+            }
+            SysOp::EngineVersion => Ok(NamedRows::new(
+                vec!["version".to_string()],
+                vec![vec![DataValue::from(crate::ENGINE_VERSION)]],
+            )),
             // mnestic fork, graph projection (`docs/specs/graph-projection.md`
             // §3.1). The registry is process-local in-memory state, so these
             // arms take no relation locks and are trivially correct under

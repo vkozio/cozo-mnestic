@@ -27,7 +27,7 @@ use crate::data::relation::NullableColType;
 use crate::data::value::{DataValue, ValidityTs};
 use crate::parse::expr::build_expr;
 use crate::parse::imperative::parse_imperative_block;
-use crate::parse::query::parse_query;
+use crate::parse::query::{parse_query, QUERY_OPTIONS};
 use crate::parse::schema::parse_nullable_type;
 use crate::parse::sys::{parse_sys, SysOp};
 use crate::{Expr, FixedRule};
@@ -390,6 +390,20 @@ fn pest_error_to_parse_error(src: &str, err: pest::error::Error<Rule>) -> ParseE
                 tokens = narrowed;
             }
         }
+        // `?[id] := *rel[id, _] ::limit 5` is a `::` pipeline prefix, which
+        // CozoScript does not have. Answering it with the token list is a
+        // contradiction rather than a correction: the list would name `:limit`
+        // in the same breath as the parser rejects `::limit`. Short-circuit
+        // before that, so the output cannot contradict itself again.
+        if let Some(help) = pipeline_prefix_help(src, attempts.max_position, &tokens) {
+            // Span the `::` itself rather than leaving a zero-width caret on
+            // its first colon.
+            span = SourceSpan(attempts.max_position, 2);
+            return ParseError {
+                span,
+                expected: Some(help),
+            };
+        }
         if !tokens.is_empty() && tokens.len() <= MAX_EXPECTED_TOKENS_IN_HINT {
             let quoted: Vec<String> = tokens.iter().map(|t| format!("`{t}`")).collect();
             expected = Some(if quoted.len() == 1 {
@@ -400,6 +414,81 @@ fn pest_error_to_parse_error(src: &str, err: pest::error::Error<Rule>) -> ParseE
         }
     }
     ParseError { span, expected }
+}
+
+/// The `QUERY_OPTIONS` entries that bound or order a result set, in table
+/// order. Looked up rather than spelled out so a rename in the table reaches
+/// the `::` diagnostic; anything the table no longer lists is dropped rather
+/// than reported as a replacement that no longer parses.
+fn result_shaping_options() -> Vec<&'static str> {
+    ["limit", "offset", "sort", "order"]
+        .iter()
+        .filter_map(|want| {
+            let want = format!(":{want}");
+            QUERY_OPTIONS
+                .iter()
+                .find_map(|(name, _)| (*name == want).then_some(*name))
+        })
+        .collect()
+}
+
+/// The help text for a `::`-prefixed operator that CozoScript has no notion of,
+/// as in `?[id] := *rel[id, _] ::limit 5`.
+///
+/// Returns `None` — leaving the caller on the token-list path — unless the
+/// source at the error position opens with `::` **and** the narrowed candidate
+/// set is non-empty and made up entirely of single-colon option keywords. That
+/// second condition is what separates "wrote a pipeline where an option goes"
+/// from "typo'd a sysop keyword": `::index crate rel:idx {a}` fails inside
+/// `index_op` where the only surviving candidate is `create`, and a bare
+/// `::limit` at the head of a script fails on sysop keywords that the grammar
+/// spells without their `::`. Neither mentions `:` as a prefix, so both keep
+/// naming the token they actually wanted.
+fn pipeline_prefix_help(src: &str, max_position: usize, tokens: &[String]) -> Option<String> {
+    let operator = src.get(max_position..)?.strip_prefix("::")?;
+    if tokens.is_empty() || tokens.iter().any(|t| !t.starts_with(':')) {
+        return None;
+    }
+
+    let spelled = operator
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .find(|w| !w.is_empty())
+        .unwrap_or_default();
+    let quoted = if spelled.is_empty() {
+        "`::`".to_string()
+    } else {
+        format!("`::{spelled}`")
+    };
+    let mut help = format!(
+        "{quoted} is not a pipeline operator: `::` prefixes a sysop or an imperative \
+         block, and CozoScript has no pipeline operators."
+    );
+
+    match QUERY_OPTIONS
+        .iter()
+        .find_map(|(name, _)| (*name == format!(":{spelled}")).then_some(*name))
+    {
+        // The user reached for a real option with the wrong prefix: name the
+        // exact spelling they were after.
+        Some(name) => help.push_str(&format!(
+            " Query options are trailing and single-colon — did you mean `{name}`?"
+        )),
+        // An operator that is not an option at all, so there is nothing to
+        // correct the spelling to; name the ones that bound or shape results.
+        None => {
+            let examples = result_shaping_options()
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            help.push_str(&format!(
+                " Its {} query options are trailing and single-colon — bound or order \
+                 results with {examples}.",
+                QUERY_OPTIONS.len()
+            ));
+        }
+    }
+    Some(help)
 }
 
 /// A pest `Range` token displays as `a..z` (single char on each side). A
@@ -546,6 +635,8 @@ mod tests {
         parse_err(src).expected.unwrap_or_default()
     }
 
+    use super::query::QUERY_OPTIONS;
+
     // The single most common agent mistake: a rule head with no arrow. The
     // hint must name the actual missing tokens, not a grammar rule name
     // (`err.variant.positives` would have said `aggr_arg` here).
@@ -601,5 +692,141 @@ mod tests {
     #[test]
     fn parse_error_suppresses_grammar_dumps() {
         assert_eq!(parse_err("?[a] <- [[1]]\n:limitt 5").expected, None);
+    }
+
+    // CozoScript has no `::` pipeline operators, so `?[id] := *rel[id, _]
+    // ::limit 5` is a mistake of syntax, not of feature. The hint has to say
+    // what to write instead — and must NOT keep listing `:limit` among the
+    // expected tokens, because asking for the token it just rejected is the
+    // contradiction this test exists to kill.
+    #[test]
+    fn parse_error_rewrites_the_non_existent_pipeline_operator() {
+        for (written, replacement) in [
+            ("::limit 5", ":limit"),
+            ("::sort id", ":sort"),
+            ("::order id", ":order"),
+            ("::offset 2", ":offset"),
+        ] {
+            let src = format!("?[id] := *rel[id, _] {written}");
+            let e = parse_err(&src);
+            let h = e.expected.clone().unwrap();
+            assert!(
+                !h.contains("expected one of"),
+                "dump survived for {src}: {h:?}"
+            );
+            assert!(
+                !h.contains("expected token:"),
+                "dump survived for {src}: {h:?}"
+            );
+            assert!(h.contains("no pipeline operators"), "{h:?}");
+            assert!(h.contains(replacement), "missing {replacement} in {h:?}");
+            // ... and the caret spans the `::` itself, not the rule head.
+            assert_eq!(e.span.1, 2, "caret is not 2 wide for {src}");
+            assert_eq!(
+                &src[e.span.0..e.span.0 + e.span.1],
+                "::",
+                "caret off `::` for {src}"
+            );
+        }
+
+        // A bare `::` with no operator at all still gets the explanation.
+        let src = "?[id] := *rel[id, _] ::";
+        let e = parse_err(src);
+        let h = e.expected.unwrap();
+        assert!(!h.contains("expected one of"), "{h:?}");
+        assert!(h.contains("`::` is not a pipeline operator"), "{h:?}");
+        assert_eq!(&src[e.span.0..e.span.0 + e.span.1], "::");
+    }
+
+    // The replacements must come from the option table, not from literals baked
+    // into the diagnostic: every keyword the table lists is reachable, and the
+    // count the unknown-operator branch quotes tracks the table, so adding an
+    // option reaches the message instead of silently making it wrong.
+    #[test]
+    fn parse_error_pipeline_hint_is_derived_from_the_option_table() {
+        for (keyword, _) in QUERY_OPTIONS {
+            let src = format!("?[id] := *rel[id, _] ::{keyword} 1");
+            let h = help(&src);
+            let wanted = format!("did you mean `{keyword}`");
+            assert!(
+                !h.contains("expected one of"),
+                "dump survived for {src}: {h:?}"
+            );
+            assert!(h.contains(&wanted), "{src} did not get {wanted}: {h:?}");
+        }
+
+        // An operator that is not an option at all: nothing to correct the
+        // spelling to, so name the ones that bound or order results.
+        let h = help("?[id] := *rel[id, _] ::frobnicate 5");
+        assert!(!h.contains("expected one of"), "{h:?}");
+        assert!(
+            h.contains(&format!("Its {} query options", QUERY_OPTIONS.len())),
+            "count not read from the table: {h:?}"
+        );
+        for name in result_shaping_options() {
+            assert!(h.contains(name), "missing {name} in {h:?}");
+        }
+        assert!(
+            !h.contains("`:frobnicate`"),
+            "invented a replacement that does not parse: {h:?}"
+        );
+    }
+
+    // `QUERY_OPTIONS` restates the keywords of the `option` rule in
+    // `cozoscript.pest` so that `::builtins options` and the `::` pipeline
+    // diagnostic can name them without the grammar at hand. Read the grammar back
+    // and require agreement: an option added to the grammar without a table entry
+    // (or an entry for a keyword the grammar dropped) fails here.
+    #[test]
+    fn query_option_names_match_grammar() {
+        let grammar = include_str!("../cozoscript.pest");
+
+        // Every `":keyword"` literal in the grammar is an option keyword; the
+        // bare `":"` used for object pairs and validity axes is not quoted that
+        // way and is skipped by the identifier check.
+        let mut from_grammar: Vec<&str> = Vec::new();
+        let mut cursor = 0;
+        while let Some(found) = grammar[cursor..].find("\":") {
+            let start = cursor + found + 2;
+            let Some(len) = grammar[start..].find('"') else {
+                break;
+            };
+            let word = &grammar[start..start + len];
+            if !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                from_grammar.push(word);
+            }
+            cursor = start + len;
+        }
+
+        let mut from_table: Vec<&str> = QUERY_OPTIONS
+            .iter()
+            .map(|(name, _)| name.trim_start_matches(':'))
+            .collect();
+        from_table.sort_unstable();
+        from_table.dedup();
+        from_grammar.sort_unstable();
+        from_grammar.dedup();
+
+        assert!(
+            from_grammar.len() >= 20,
+            "grammar keyword scan found only {} option(s) — the scan is broken, not the table: {from_grammar:?}",
+            from_grammar.len()
+        );
+        let missing: Vec<&&str> = from_grammar
+            .iter()
+            .filter(|g| !from_table.contains(g))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "QUERY_OPTIONS omits grammar option(s): {missing:?}"
+        );
+        let extra: Vec<&&str> = from_table
+            .iter()
+            .filter(|t| !from_grammar.contains(t))
+            .collect();
+        assert!(
+            extra.is_empty(),
+            "QUERY_OPTIONS invents option(s) absent from the grammar: {extra:?}"
+        );
     }
 }

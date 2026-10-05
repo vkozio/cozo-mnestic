@@ -39,6 +39,33 @@ escaped literals, whitespace-sensitive values, and typed fields before upgrading
 Stored values are not rewritten, and the storage format and `mnestic-rocks`
 0.1.12 dependency are unchanged.
 
+### Added
+
+- **Language introspection sysops.** The enumerable script-facing surface is
+  now listable at runtime: `::builtins` (bare) and `::builtins all` return the
+  union of the three slices with a `kind` discriminator — `ops`
+  (`name`, `min_arity`, `vararg`, 158 rows), `options` (`name`, `description`,
+  22 rows) and `aggrs` (`name`, `is_meet`, `is_bounded_meet`, `custom`,
+  29 rows). Bare `::builtins` is exactly `::builtins all`, so one unconditional
+  call discovers everything. Cells that do not apply to a row's kind are `null`,
+  a real value, so `is null` filters the union without a placeholder comparison.
+  `::builtins aggrs` additionally reports aggregates registered on the running
+  `Db` (`custom` is true), so it answers a question about the live engine. A
+  mistyped slice fails loudly instead of returning no rows. `::version` reports
+  the compiled-in engine version. Both sysops also parse inside an imperative
+  block. The gap these close is **discoverability, not capability** — every one
+  of these constructs already worked. See
+  [the surface reference](docs/specs/cozoscript-surface.md).
+- **[Surface reference](docs/specs/cozoscript-surface.md).** New spec documenting
+  the 22 query options, the flat 158-name builtin namespace, the 29 aggregates,
+  and the four rules that generate a wrong answer rather than an error: there are
+  no pipeline operators, there are no builtin namespaces, `~` is `coalesce`
+  rather than a match operator, and **projecting a subset of columns returns the
+  set of distinct tuples rather than stored rows** — the one item in this batch
+  that fails silently. Also documents that `:sort`/`:order` validate against the
+  entry rule's output columns, so a column that was read but not projected
+  cannot be sorted by.
+
 ### Changed
 
 - **BREAKING (results): String literals (#53).** Double-quoted strings now
@@ -79,6 +106,25 @@ Stored values are not rewritten, and the storage format and `mnestic-rocks`
 
 ### Fixed
 
+- A `::`-prefixed result operator is now diagnosed as such instead of being
+  reported as an unexpected token. `?[id] := *rel[id, _] ::limit 5` previously
+  produced a bare "expected one of" list that simultaneously named `:limit` and
+  rejected `::limit`, i.e. contradicted itself. It now reads: `` `::limit` is not
+  a pipeline operator: `::` prefixes a sysop or an imperative block, and
+  CozoScript has no pipeline operators. Query options are trailing and
+  single-colon — did you mean `:limit`? `` When the token after `::` is not an
+  option name, the same message instead names the four options that shape
+  results (`:limit`, `:offset`, `:sort`, `:order`) and the current total. The
+  candidate-set check keeps this out of the way of genuinely mistyped sysops,
+  which still get their token list.
+- `eval::rule_arity_mismatch` help now names the skip placeholder instead of
+  only reporting the two arities, so a short relation pattern states that every
+  column must be listed and that `_` writes the ones you do not need. The
+  `eval::unbound_symb_in_head` help now notes that a `_` in the body binds
+  nothing, so a head column named only there fails. The suggested worked
+  example in the arity help is still a fixed four-slot literal rather than an
+  interpolation of the real arity; see
+  [the surface reference](docs/specs/cozoscript-surface.md) §9.
 - Integer FTS boosts such as `Di*^3` no longer panic; integer and decimal boosts
   use the same scoring behavior.
 - Unsupported quoted multi-token prefixes are rejected before filters can remove
@@ -102,6 +148,15 @@ Stored values are not rewritten, and the storage format and `mnestic-rocks`
 
 ### Known limitations
 
+- **Fixed (2026-10-05):** a bare `true` conjunct in a rule
+  body combined with any trailing query option returned an empty result.
+  `?[k] := *r[k, _], true` returns the same rows as `?[k] := *r[k, _]`, but the
+  same query with `:sort k`, `:limit 5`, `:offset 0`, `:timeout` or `:mem_limit`
+  returned nothing. Root cause was the parser (non-atomic `boolean`/`null` rules leaked trailing WHITESPACE into `as_str()`); made atomic in `cozoscript.pest`. Sibling `:limit 0` early-return leak fixed in `query/eval.rs`. Pinned by `cozo-core/tests/true_conjunct.rs` (27 tests). See
+  [the surface reference](docs/specs/cozoscript-surface.md) §2.2.
+- `parser::sort_key_not_found` reports "not projected" and "does not exist"
+  identically, so the remedy — project the column, or fix the name — is not
+  distinguishable from the message.
 - `\uXXXX` escapes remain BMP-only: surrogate pairs and lone surrogates are
   rejected. Literal non-BMP characters work; use Python `ensure_ascii=False` when
   embedding JSON-encoded strings in scripts, or bind parameters.

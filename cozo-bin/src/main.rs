@@ -20,8 +20,15 @@ mod client;
 mod repl;
 mod server;
 
+/// Report the engine version, not this crate's.
+///
+/// `cozo-bin`'s `[package].version` is still the upstream 0.7.6 relic and is
+/// deliberately outside the version gate (`scripts/check_versions.py`), so
+/// clap's default `version` names an engine eleven releases old and makes a
+/// current build look stale. Anything user-visible must echo the engine number
+/// instead; `concat!` cannot join it (literals only), hence no bin version here.
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = cozo::ENGINE_VERSION, about, long_about = None)]
 #[command(propagate_version = true)]
 struct AppArgs {
     #[command(subcommand)]

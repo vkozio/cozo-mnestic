@@ -84,8 +84,16 @@ pub use fixed_rule::{FixedRule, FixedRuleInputRelation, FixedRulePayload};
 pub use graph::prelude::{DirectedCsrGraph, DirectedNeighbors, DirectedNeighborsWithValues, Graph};
 #[cfg(feature = "columnar-io")]
 pub use runtime::columnar::{ColumnarFileFormat, ColumnarImportOptions, ColumnarImportReport};
-pub use runtime::db::Db;
-pub use runtime::db::NamedRows;
+  pub use runtime::db::Db;
+  pub use runtime::db::NamedRows;
+  /// The engine version, compiled in from this crate's `Cargo.toml`.
+  ///
+  /// The binding crates carry their own upstream version numbers (`cozo-bin`
+  /// still says 0.7.6 — see `scripts/check_versions.py`), so a host that reports
+  /// its own `CARGO_PKG_VERSION` misreports which engine it is linked against.
+  /// Anything user-visible should echo this instead.
+  pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub use runtime::diagnostics::QueryWarning;
 #[cfg(feature = "graph-algo")]
 pub use runtime::graph_projection::{
